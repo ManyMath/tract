@@ -1,0 +1,5 @@
+# tract's MSRV is newer than some toolchains default to, so build this crate
+# with the installed `stable` toolchain. Install it with `rustup toolchain
+# install stable` if needed.
+[toolchain]
+channel = "stable"

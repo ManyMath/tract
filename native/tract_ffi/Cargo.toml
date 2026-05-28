@@ -1,0 +1,21 @@
+[package]
+name = "tract_ffi"
+version = "0.0.1"
+edition = "2021"
+description = "C ABI around the tract neural network inference engine."
+license = "MIT"
+repository = "https://github.com/ManyMath/tract"
+
+[lib]
+name = "tract_ffi"
+# cdylib for FFI from Dart; staticlib for static linking (e.g. iOS) later;
+# rlib so in-repo examples/tests can call the API directly.
+crate-type = ["cdylib", "staticlib", "rlib"]
+
+[dependencies]
+# The sonos/tract inference engine. tract-onnx pulls in tract-hir/tract-core and
+# loads ONNX graphs; tract-nnef loads tract's own NNEF model format. Both are
+# pure Rust with no system dependencies, so they cross-compile to Android, iOS,
+# Windows and macOS without extra toolchains.
+tract-onnx = "0.23"
+tract-nnef = "0.23"
