@@ -1,0 +1,25 @@
+name: tract
+description: >-
+  Pure-Dart neural network inference with no extra system dependencies.
+  Loads and runs ONNX/NNEF models via the Rust tract engine over FFI.
+version: 0.0.1
+repository: https://github.com/ManyMath/tract
+issue_tracker: https://github.com/ManyMath/tract/issues
+topics:
+  - machine-learning
+  - inference
+  - onnx
+  - tract
+  - ffi
+
+environment:
+  sdk: ^3.10.0
+
+resolution: workspace
+
+dependencies:
+  ffi: ^2.1.0
+
+dev_dependencies:
+  lints: ^6.0.0
+  test: ^1.25.0
