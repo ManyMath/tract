@@ -1,9 +1,8 @@
 # tract
 
-Cross-platform neural network inference for Dart and Flutter with the goal of no
-additional system dependencies for users or devs to install.  The only build-
-time requirement beyond Dart/Flutter is Rust, and eventually that will be
-obviated via precompiled binaries (TODO).
+Neural network inference for Dart and Flutter across platforms. Native builds
+require Rust in addition to Dart or Flutter. Precompiled binaries are planned
+to remove that build requirement.
 
 It wraps the Rust [`tract`](https://github.com/sonos/tract) inference engine,
 which loads and runs ONNX and NNEF models. tract is pure Rust with no system

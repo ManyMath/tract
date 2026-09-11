@@ -11,7 +11,7 @@ abstract class TractBackend {
   /// A short, stable identifier (e.g. `ffi`).
   String get name;
 
-  /// Whether this backend can actually run in the current environment.
+  /// Whether this backend can run in the current environment.
   ///
   /// Should be cheap and side-effect free; it is consulted during backend
   /// selection. The FFI backend reports `false` when the native library cannot

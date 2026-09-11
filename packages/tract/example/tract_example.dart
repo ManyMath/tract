@@ -9,7 +9,7 @@
 //
 // Each bundled sample is a real MNIST test image with its true label, so the
 // prediction is checkable: the printed digit must match what you see and the
-// label, and it could not be produced without actually running the network.
+// label, and it could not be produced without running the network.
 //
 // If the library is elsewhere, point to it with TRACT_LIB=/path/to/lib.
 
