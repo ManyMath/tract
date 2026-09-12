@@ -352,8 +352,7 @@ pub unsafe extern "C" fn tract_onnx_model_load_path_with_shape(
     };
     let build = || -> TractResult<TractModel> {
         let model = tract_onnx::onnx().model_for_path(path)?;
-        let sample = Tensor::zero_dt(dt, &shape_vec)?;
-        let model = model.with_input_fact(0, InferenceFact::dt_shape_from_tensor(&sample))?;
+        let model = model.with_input_fact(0, InferenceFact::dt_shape(dt, shape_vec))?;
         finalize_inference(model)
     };
     to_model(build())
@@ -417,8 +416,7 @@ pub unsafe extern "C" fn tract_onnx_model_load_bytes_with_shape(
     let build = || -> TractResult<TractModel> {
         let mut reader = std::io::Cursor::new(bytes);
         let model = tract_onnx::onnx().model_for_read(&mut reader)?;
-        let sample = Tensor::zero_dt(dt, &shape_vec)?;
-        let model = model.with_input_fact(0, InferenceFact::dt_shape_from_tensor(&sample))?;
+        let model = model.with_input_fact(0, InferenceFact::dt_shape(dt, shape_vec))?;
         finalize_inference(model)
     };
     to_model(build())
@@ -659,6 +657,45 @@ mod tests {
         };
         assert!(!v.is_null());
         tract_value_free(v);
+    }
+
+    #[test]
+    fn onnx_load_with_shape_pins_input_zero() {
+        // A float32[3] -> float32[3] Identity model, shared with the Dart tests.
+        // Pinning input 0 to [4] overrides the declared shape, so the model then
+        // accepts a 4-element input.
+        let onnx = include_bytes!("../../../packages/tract/test/fixtures/identity.onnx");
+        let shape: [usize; 1] = [4];
+        let model = unsafe {
+            tract_onnx_model_load_bytes_with_shape(
+                onnx.as_ptr() as *const c_void,
+                onnx.len(),
+                DT_F32,
+                shape.as_ptr(),
+                1,
+            )
+        };
+        assert!(!model.is_null());
+
+        let data: [f32; 4] = [1.0, 2.0, 3.0, 4.0];
+        let input = unsafe {
+            tract_value_from_bytes(
+                DT_F32,
+                shape.as_ptr(),
+                1,
+                data.as_ptr() as *const c_void,
+                std::mem::size_of_val(&data),
+            )
+        };
+        let inputs: [*const TractValue; 1] = [input];
+        let mut outputs: [*mut TractValue; 1] = [std::ptr::null_mut()];
+        let n = unsafe { tract_model_run(model, inputs.as_ptr(), 1, outputs.as_mut_ptr(), 1) };
+        assert_eq!(n, 1);
+        assert_eq!(tract_value_len(outputs[0]), 4);
+
+        tract_value_free(input);
+        tract_value_free(outputs[0]);
+        tract_model_free(model);
     }
 
     #[test]
