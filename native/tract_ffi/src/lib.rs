@@ -133,7 +133,13 @@ pub unsafe extern "C" fn tract_value_from_bytes(
     } else {
         std::slice::from_raw_parts(shape, rank)
     };
-    let expected = shape_slice.iter().product::<usize>() * dt.size_of();
+    let Some(expected) = shape_slice
+        .iter()
+        .try_fold(dt.size_of(), |acc, &d| acc.checked_mul(d))
+    else {
+        set_last_error(format!("shape {shape_slice:?} overflows the address space"));
+        return std::ptr::null_mut();
+    };
     if len != expected {
         set_last_error(format!("data length {len} != expected {expected} bytes"));
         return std::ptr::null_mut();
@@ -146,6 +152,12 @@ pub unsafe extern "C" fn tract_value_from_bytes(
     } else {
         std::slice::from_raw_parts(data as *const u8, len)
     };
+    // A Rust bool must be 0 or 1; anything else is undefined behavior once
+    // tract reads the tensor.
+    if dt == DatumType::Bool && bytes.iter().any(|&b| b > 1) {
+        set_last_error("bool tensor data must be 0 or 1");
+        return std::ptr::null_mut();
+    }
     match Tensor::from_raw_dt(dt, shape_slice, bytes) {
         Ok(t) => Box::into_raw(Box::new(TractValue(t))),
         Err(e) => {
@@ -610,6 +622,43 @@ mod tests {
         tract_value_free(input);
         tract_value_free(out);
         tract_model_free(model);
+    }
+
+    #[test]
+    fn value_from_bytes_rejects_overflowing_shape() {
+        // The byte length wraps to a small number in release builds if the
+        // multiplication is unchecked.
+        let shape: [usize; 2] = [usize::MAX, usize::MAX];
+        let data = [0u8; 4];
+        let v = unsafe {
+            tract_value_from_bytes(DT_F32, shape.as_ptr(), 2, data.as_ptr() as *const c_void, 4)
+        };
+        assert!(v.is_null());
+        let err = unsafe { CStr::from_ptr(tract_last_error()) };
+        assert!(err.to_str().unwrap().contains("overflows"));
+    }
+
+    #[test]
+    fn value_from_bytes_rejects_invalid_bool() {
+        let shape: [usize; 1] = [3];
+        let bad = [0u8, 1, 2];
+        let v = unsafe {
+            tract_value_from_bytes(DT_BOOL, shape.as_ptr(), 1, bad.as_ptr() as *const c_void, 3)
+        };
+        assert!(v.is_null());
+
+        let good = [0u8, 1, 1];
+        let v = unsafe {
+            tract_value_from_bytes(
+                DT_BOOL,
+                shape.as_ptr(),
+                1,
+                good.as_ptr() as *const c_void,
+                3,
+            )
+        };
+        assert!(!v.is_null());
+        tract_value_free(v);
     }
 
     #[test]
