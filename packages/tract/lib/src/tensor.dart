@@ -11,13 +11,21 @@ import 'datum_type.dart';
 class Tensor {
   /// Creates a tensor from raw native-endian [bytes].
   ///
-  /// Throws [ArgumentError] if `bytes.length` does not match the product of
-  /// [shape] times the element size of [datumType].
+  /// Throws [ArgumentError] if a dimension of [shape] is negative, or if
+  /// `bytes.length` does not match the product of [shape] times the element
+  /// size of [datumType].
   Tensor.fromBytes({
     required this.datumType,
     required List<int> shape,
     required this.bytes,
   }) : shape = List.unmodifiable(shape) {
+    if (this.shape.any((d) => d < 0)) {
+      throw ArgumentError.value(
+        shape,
+        'shape',
+        'dimensions must be non-negative',
+      );
+    }
     final expected = _product(this.shape) * datumType.byteSize;
     if (bytes.lengthInBytes != expected) {
       throw ArgumentError(

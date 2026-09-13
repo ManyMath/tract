@@ -253,6 +253,13 @@ class FfiBackend extends TractBackend {
     List<int>? inputShape,
     DatumType inputType = DatumType.f32,
   }) async {
+    if (inputShape != null && inputShape.any((d) => d < 0)) {
+      throw ArgumentError.value(
+        inputShape,
+        'inputShape',
+        'dimensions must be non-negative',
+      );
+    }
     final handle = switch (source) {
       FileSource(:final path) => _withUtf8(path, (cPath) {
         if (inputShape == null) return _b.onnxLoadPath(cPath);

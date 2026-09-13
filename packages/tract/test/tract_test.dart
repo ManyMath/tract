@@ -50,6 +50,18 @@ void main() {
       );
     });
 
+    test('rejects negative dimensions', () {
+      // [-1, -1] multiplies out to 1, so the byte-length check alone passes.
+      expect(
+        () => Tensor.fromBytes(
+          datumType: DatumType.f32,
+          shape: [-1, -1],
+          bytes: Uint8List(4),
+        ),
+        throwsArgumentError,
+      );
+    });
+
     test('a view of the wrong type throws', () {
       final t = Tensor.float32([1, 2], [2]);
       expect(t.asInt64List, throwsStateError);

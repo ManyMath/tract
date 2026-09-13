@@ -100,6 +100,22 @@ void main() {
     expect(count, 10);
   });
 
+  test('a negative inputShape dimension throws ArgumentError', () async {
+    if (!_nativeAvailable) {
+      markTestSkipped('tract_ffi library not built');
+      return;
+    }
+    final fixture = _asset('identity.onnx');
+    if (fixture == null) {
+      markTestSkipped('identity.onnx fixture not found');
+      return;
+    }
+    expect(
+      () => Tract.loadOnnxFile(fixture, inputShape: [-1]),
+      throwsArgumentError,
+    );
+  });
+
   test('loading garbage bytes throws ModelLoadException', () async {
     if (!_nativeAvailable) {
       markTestSkipped('tract_ffi library not built');
