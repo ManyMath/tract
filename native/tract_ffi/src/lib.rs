@@ -89,6 +89,21 @@ pub extern "C" fn tract_last_error() -> *const c_char {
     LAST_ERROR.with(|e| e.borrow().as_ptr())
 }
 
+/// Runs `f`, turning a panic into an error. A panic must not unwind out of an
+/// `extern "C"` fn - Rust aborts the whole process when one tries - so an
+/// assertion tripped deep inside tract by a malformed model would otherwise
+/// take the host app down with it.
+fn catch_panic<T>(f: impl FnOnce() -> TractResult<T>) -> TractResult<T> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).unwrap_or_else(|payload| {
+        let msg = payload
+            .downcast_ref::<&str>()
+            .copied()
+            .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+            .unwrap_or("unknown panic");
+        Err(TractError::msg(format!("tract panicked: {msg}")))
+    })
+}
+
 /// Returns this library's version as a static NUL-terminated string.
 ///
 /// Doubles as a stable exported symbol for `-force_load` on Apple platforms.
@@ -158,7 +173,7 @@ pub unsafe extern "C" fn tract_value_from_bytes(
         set_last_error("bool tensor data must be 0 or 1");
         return std::ptr::null_mut();
     }
-    match Tensor::from_raw_dt(dt, shape_slice, bytes) {
+    match catch_panic(|| Tensor::from_raw_dt(dt, shape_slice, bytes)) {
         Ok(t) => Box::into_raw(Box::new(TractValue(t))),
         Err(e) => {
             set_last_error(e.to_string());
@@ -280,8 +295,8 @@ fn finalize_typed(model: TypedModel) -> TractResult<TractModel> {
     make_model(model.into_optimized()?.into_runnable()?)
 }
 
-fn to_model(result: TractResult<TractModel>) -> *mut TractModel {
-    match result {
+fn to_model(build: impl FnOnce() -> TractResult<TractModel>) -> *mut TractModel {
+    match catch_panic(build) {
         Ok(m) => Box::into_raw(Box::new(m)),
         Err(e) => {
             set_last_error(e.to_string());
@@ -314,11 +329,11 @@ pub unsafe extern "C" fn tract_onnx_model_load_path(path: *const c_char) -> *mut
     let Some(path) = read_str(path) else {
         return std::ptr::null_mut();
     };
-    to_model(
+    to_model(|| {
         tract_onnx::onnx()
             .model_for_path(path)
-            .and_then(finalize_inference),
-    )
+            .and_then(finalize_inference)
+    })
 }
 
 /// Like [`tract_onnx_model_load_path`] but pins input 0 to `dtype` and the given
@@ -355,7 +370,7 @@ pub unsafe extern "C" fn tract_onnx_model_load_path_with_shape(
         let model = model.with_input_fact(0, InferenceFact::dt_shape(dt, shape_vec))?;
         finalize_inference(model)
     };
-    to_model(build())
+    to_model(build)
 }
 
 /// Loads and optimizes an ONNX model from an in-memory buffer. Returns null on
@@ -374,11 +389,11 @@ pub unsafe extern "C" fn tract_onnx_model_load_bytes(
     }
     let bytes = std::slice::from_raw_parts(data as *const u8, len);
     let mut reader = std::io::Cursor::new(bytes);
-    to_model(
+    to_model(|| {
         tract_onnx::onnx()
             .model_for_read(&mut reader)
-            .and_then(finalize_inference),
-    )
+            .and_then(finalize_inference)
+    })
 }
 
 /// Like [`tract_onnx_model_load_bytes`] but pins input 0 to `dtype` and the
@@ -419,7 +434,7 @@ pub unsafe extern "C" fn tract_onnx_model_load_bytes_with_shape(
         let model = model.with_input_fact(0, InferenceFact::dt_shape(dt, shape_vec))?;
         finalize_inference(model)
     };
-    to_model(build())
+    to_model(build)
 }
 
 /// Loads and optimizes a tract NNEF model from a file path (a directory or a
@@ -432,11 +447,11 @@ pub unsafe extern "C" fn tract_nnef_model_load_path(path: *const c_char) -> *mut
     let Some(path) = read_str(path) else {
         return std::ptr::null_mut();
     };
-    to_model(
+    to_model(|| {
         tract_nnef::nnef()
             .model_for_path(path)
-            .and_then(finalize_typed),
-    )
+            .and_then(finalize_typed)
+    })
 }
 
 /// Loads and optimizes a tract NNEF model from an in-memory `.nnef.tgz` archive.
@@ -455,11 +470,11 @@ pub unsafe extern "C" fn tract_nnef_model_load_bytes(
     }
     let bytes = std::slice::from_raw_parts(data as *const u8, len);
     let mut reader = std::io::Cursor::new(bytes);
-    to_model(
+    to_model(|| {
         tract_nnef::nnef()
             .model_for_read(&mut reader)
-            .and_then(finalize_typed),
-    )
+            .and_then(finalize_typed)
+    })
 }
 
 /// Frees a model created by this library.
@@ -537,6 +552,10 @@ pub unsafe extern "C" fn tract_model_run(
         set_last_error("null inputs");
         return -1;
     }
+    if outputs.is_null() && out_cap != 0 {
+        set_last_error("null outputs");
+        return -1;
+    }
     let in_handles = if n_inputs == 0 {
         &[][..]
     } else {
@@ -549,7 +568,7 @@ pub unsafe extern "C" fn tract_model_run(
         };
         values.push(v.0.clone().into());
     }
-    match model.plan.run(values) {
+    match catch_panic(|| model.plan.run(values)) {
         Ok(result) => {
             let n = result.len();
             if n > out_cap {
@@ -558,9 +577,21 @@ pub unsafe extern "C" fn tract_model_run(
                 ));
                 return -1;
             }
-            let out_slice = std::slice::from_raw_parts_mut(outputs, n);
-            for (slot, tv) in out_slice.iter_mut().zip(result) {
-                *slot = Box::into_raw(Box::new(TractValue(tv.into_tensor())));
+            // Fail before handing out any handles, so the caller never has to
+            // free a partial set.
+            if let Some((ix, dt)) = result
+                .iter()
+                .map(|t| t.datum_type())
+                .enumerate()
+                .find(|&(_, dt)| datum_type_to_code(dt) < 0)
+            {
+                set_last_error(format!("output {ix} has unsupported datum type {dt:?}"));
+                return -1;
+            }
+            // n <= out_cap, so a null `outputs` (only allowed with out_cap 0)
+            // is never written through.
+            for (ix, tv) in result.into_iter().enumerate() {
+                *outputs.add(ix) = Box::into_raw(Box::new(TractValue(tv.into_tensor())));
             }
             n as isize
         }
@@ -696,6 +727,12 @@ mod tests {
         tract_value_free(input);
         tract_value_free(outputs[0]);
         tract_model_free(model);
+    }
+
+    #[test]
+    fn catch_panic_reports_instead_of_unwinding() {
+        let err = catch_panic::<()>(|| panic!("boom")).unwrap_err();
+        assert!(err.to_string().contains("boom"));
     }
 
     #[test]
