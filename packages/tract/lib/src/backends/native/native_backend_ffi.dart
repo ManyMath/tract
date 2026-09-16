@@ -353,13 +353,15 @@ class FfiModel implements Model {
       }
       final n = b.run(_handle, inArray, inputs.length, outArray, _outputCount);
       if (n < 0) throw InferenceException(_backend.lastError());
-      final results = <Tensor>[];
-      for (var i = 0; i < n; i++) {
-        final v = outArray[i];
-        results.add(_readValue(b, v));
-        b.valueFree(v);
+      try {
+        return [for (var i = 0; i < n; i++) _readValue(b, outArray[i])];
+      } finally {
+        // We own every output handle, including those after one that failed
+        // to read.
+        for (var i = 0; i < n; i++) {
+          b.valueFree(outArray[i]);
+        }
       }
-      return results;
     } finally {
       for (final h in handles) {
         b.valueFree(h);
