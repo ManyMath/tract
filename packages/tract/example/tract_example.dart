@@ -31,13 +31,32 @@ Future<void> main(List<String> args) async {
     return;
   }
 
-  print('Active backend: ${Tract.backend.name}');
+  final samples = _readSamples(File(samplesPath).readAsBytesSync());
+  final show = args.isEmpty ? 0 : int.tryParse(args.first);
+  if (show == null || show < 0 || show >= samples.length) {
+    stderr.writeln(
+      'Sample index must be 0..${samples.length - 1}, got "${args.first}".',
+    );
+    exitCode = 64;
+    return;
+  }
+
+  final TractBackend backend;
+  try {
+    backend = Tract.backend;
+  } on NoBackendAvailableException {
+    stderr.writeln(
+      'Could not load the tract_ffi library. Build it with\n'
+      '  cargo build --manifest-path native/tract_ffi/Cargo.toml\n'
+      'or point TRACT_LIB at an existing build.',
+    );
+    exitCode = 1;
+    return;
+  }
+  print('Active backend: ${backend.name}');
   // The model already declares a concrete float[1,1,28,28] input.
   final model = await Tract.loadOnnxFile(modelPath);
   print('Model: ${model.inputNames} -> ${model.outputNames}\n');
-
-  final samples = _readSamples(File(samplesPath).readAsBytesSync());
-  final show = args.isNotEmpty ? (int.tryParse(args.first) ?? 0) : 0;
 
   var correct = 0;
   for (var i = 0; i < samples.length; i++) {
