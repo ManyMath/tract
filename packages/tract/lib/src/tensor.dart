@@ -87,38 +87,45 @@ class Tensor {
     bytes: Uint8List.fromList(values),
   );
 
-  /// A copy of the data viewed as `f32`. Throws [StateError] if [datumType] is
-  /// not [DatumType.f32].
+  // The typed views below share [bytes] when possible. Typed-data views must
+  // start at a multiple of the element size, so when [bytes] is a sublist at
+  // an unaligned offset they view an aligned copy instead.
+
+  /// The data as `f32`. Throws [StateError] if [datumType] is not
+  /// [DatumType.f32].
   Float32List asFloat32List() {
-    _expect(DatumType.f32);
-    return bytes.buffer.asFloat32List(bytes.offsetInBytes, length);
+    final b = _aligned(DatumType.f32);
+    return b.buffer.asFloat32List(b.offsetInBytes, length);
   }
 
-  /// A copy of the data viewed as `f64`. Throws [StateError] if [datumType] is
-  /// not [DatumType.f64].
+  /// The data as `f64`. Throws [StateError] if [datumType] is not
+  /// [DatumType.f64].
   Float64List asFloat64List() {
-    _expect(DatumType.f64);
-    return bytes.buffer.asFloat64List(bytes.offsetInBytes, length);
+    final b = _aligned(DatumType.f64);
+    return b.buffer.asFloat64List(b.offsetInBytes, length);
   }
 
-  /// A view of the data as `i32`. Throws [StateError] if [datumType] is not
+  /// The data as `i32`. Throws [StateError] if [datumType] is not
   /// [DatumType.i32].
   Int32List asInt32List() {
-    _expect(DatumType.i32);
-    return bytes.buffer.asInt32List(bytes.offsetInBytes, length);
+    final b = _aligned(DatumType.i32);
+    return b.buffer.asInt32List(b.offsetInBytes, length);
   }
 
-  /// A view of the data as `i64`. Throws [StateError] if [datumType] is not
+  /// The data as `i64`. Throws [StateError] if [datumType] is not
   /// [DatumType.i64].
   Int64List asInt64List() {
-    _expect(DatumType.i64);
-    return bytes.buffer.asInt64List(bytes.offsetInBytes, length);
+    final b = _aligned(DatumType.i64);
+    return b.buffer.asInt64List(b.offsetInBytes, length);
   }
 
-  void _expect(DatumType wanted) {
+  Uint8List _aligned(DatumType wanted) {
     if (datumType != wanted) {
       throw StateError('tensor is ${datumType.name}, not ${wanted.name}');
     }
+    return bytes.offsetInBytes % wanted.byteSize == 0
+        ? bytes
+        : Uint8List.fromList(bytes);
   }
 
   @override

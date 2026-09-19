@@ -62,6 +62,17 @@ void main() {
       );
     });
 
+    test('views bytes that start at an unaligned offset', () {
+      final f32 = Float32List.fromList([1.5, -2.5]).buffer.asUint8List();
+      final unaligned = Uint8List(f32.length + 1)..setAll(1, f32);
+      final t = Tensor.fromBytes(
+        datumType: DatumType.f32,
+        shape: [2],
+        bytes: Uint8List.sublistView(unaligned, 1),
+      );
+      expect(t.asFloat32List(), [1.5, -2.5]);
+    });
+
     test('a view of the wrong type throws', () {
       final t = Tensor.float32([1, 2], [2]);
       expect(t.asInt64List, throwsStateError);
