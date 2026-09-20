@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 import 'dart:typed_data';
 
+import 'package:flutter/gestures.dart' show DragStartBehavior;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:tract_flutter/tract_flutter.dart';
@@ -217,12 +218,17 @@ class _Board extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
+      // Start each stroke where the pointer went down, not where the drag was
+      // recognized - on touch screens that is a whole pan slop further on.
+      dragStartBehavior: DragStartBehavior.down,
       onPanStart: (d) => onStart(_clamp(d.localPosition)),
       onPanUpdate: (d) => onUpdate(_clamp(d.localPosition)),
       child: Container(
         width: _boardSize,
         height: _boardSize,
-        decoration: BoxDecoration(
+        // A foreground border adds no padding, so the painter shares the
+        // gesture detector's coordinate space.
+        foregroundDecoration: BoxDecoration(
           border: Border.all(color: Colors.indigo, width: 2),
         ),
         child: CustomPaint(
