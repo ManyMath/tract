@@ -42,6 +42,7 @@ class _DigitPageState extends State<DigitPage> {
 
   final List<List<Offset>> _strokes = [];
   Uint8List? _sample; // when set, the board shows a bundled 28x28 digit instead
+  int? _sampleLabel; // the true label of _sample
   List<double>? _probs;
   String _note = 'Draw a digit (0-9), then Recognize.';
 
@@ -93,9 +94,11 @@ class _DigitPageState extends State<DigitPage> {
     final logits = model.run([input]).single.asFloat32List();
     setState(() {
       _probs = _softmax(logits);
+      final label = _sampleLabel;
       _note =
           'Predicted ${_prediction!} '
-          '(${(_probs![_prediction!] * 100).toStringAsFixed(1)}%).';
+          '(${(_probs![_prediction!] * 100).toStringAsFixed(1)}%)'
+          '${label == null ? '' : ', true label $label'}.';
     });
   }
 
@@ -117,6 +120,7 @@ class _DigitPageState extends State<DigitPage> {
     setState(() {
       _strokes.clear();
       _sample = null;
+      _sampleLabel = null;
       _probs = null;
       _note = 'Draw a digit (0-9), then Recognize.';
     });
@@ -133,8 +137,7 @@ class _DigitPageState extends State<DigitPage> {
     setState(() {
       _strokes.clear();
       _sample = Uint8List.sublistView(samples, off + 1, off + stride);
-      _probs = null;
-      _note = 'Bundled real MNIST digit (true label ${samples[off]}).';
+      _sampleLabel = samples[off];
     });
     _classify(_sample!);
   }
@@ -157,6 +160,7 @@ class _DigitPageState extends State<DigitPage> {
                 sample: _sample,
                 onStart: (p) => setState(() {
                   _sample = null;
+                  _sampleLabel = null;
                   _strokes.add([p]);
                 }),
                 onUpdate: (p) => setState(() => _strokes.last.add(p)),
