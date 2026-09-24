@@ -53,18 +53,29 @@ class _DigitPageState extends State<DigitPage> {
   }
 
   Future<void> _init() async {
+    Model? model;
     try {
       final name = await TractFlutter.ensureInitialized();
-      final model = await TractFlutter.loadOnnxAsset('assets/mnist-8.onnx');
+      model = await TractFlutter.loadOnnxAsset('assets/mnist-8.onnx');
       final samples = await rootBundle.load('assets/mnist_samples.bin');
-      if (!mounted) return;
+      if (!mounted) {
+        model.dispose();
+        return;
+      }
       setState(() {
         _backend = name;
         _model = model;
         _samples = samples.buffer.asUint8List();
       });
     } on Object catch (e) {
-      if (mounted) setState(() => _note = 'Failed to load model: $e');
+      // The model has no finalizer; release it if a later step failed.
+      model?.dispose();
+      if (mounted) {
+        setState(() {
+          _backend = 'unavailable';
+          _note = 'Failed to load model: $e';
+        });
+      }
     }
   }
 
