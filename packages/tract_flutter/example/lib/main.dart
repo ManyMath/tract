@@ -65,7 +65,7 @@ class _DigitPageState extends State<DigitPage> {
       setState(() {
         _backend = name;
         _model = model;
-        _samples = samples.buffer.asUint8List();
+        _samples = Uint8List.sublistView(samples);
       });
     } on Object catch (e) {
       // The model has no finalizer; release it if a later step failed.
