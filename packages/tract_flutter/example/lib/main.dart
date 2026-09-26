@@ -124,6 +124,8 @@ class _DigitPageState extends State<DigitPage> {
       return;
     }
     final px = await rasterizeStrokes(_strokes, _boardSize);
+    // dispose() may have freed the model while we were rasterizing.
+    if (!mounted) return;
     _classify(px);
   }
 
