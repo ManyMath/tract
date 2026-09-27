@@ -43,8 +43,11 @@ Future<Uint8List> rasterizeStrokes(
     }
     canvas.drawPath(path, ink);
   }
-  final image = await recorder.endRecording().toImage(r, r);
+  final picture = recorder.endRecording();
+  final image = await picture.toImage(r, r);
+  picture.dispose();
   final bytes = await image.toByteData(format: ui.ImageByteFormat.rawRgba);
+  image.dispose();
   final rgba = bytes!.buffer.asUint8List();
   final gray = Uint8List(r * r);
   for (var i = 0; i < r * r; i++) {
