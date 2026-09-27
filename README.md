@@ -36,10 +36,10 @@ Both examples run the real MNIST classifier from the ONNX Model Zoo - not a toy
 or echo, so the predictions are checkable against the digits you see.
 
 ```sh
-# CLI: classify bundled real MNIST digits, each rendered as ASCII art.
+# CLI: classify the bundled real MNIST digits, rendering one as text art.
 dart run packages/tract/example/tract_example.dart
 
-# Flutter: draw a digit with the mouse/finger and recognize it live.
+# Flutter: draw a digit with the mouse or a finger, then recognize it.
 cd packages/tract_flutter/example && flutter run
 ```
 

@@ -1,16 +1,13 @@
 # tract_flutter_example
 
-A new Flutter project.
+Draw a digit on the board and press **Recognize** to classify it with the MNIST
+ONNX model from the ONNX Model Zoo, running on-device through `tract_flutter`.
+**Random sample** steps through the bundled real MNIST test digits (see
+[`assets/README.md`](assets/README.md)).
 
-## Getting Started
+```sh
+flutter run
+```
 
-This project is a starting point for a Flutter application.
-
-A few resources to get you started if this is your first Flutter project:
-
-- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
-
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+Building needs a Rust toolchain (`rustup`); cargokit compiles the `tract_ffi`
+crate as part of the Flutter build.
