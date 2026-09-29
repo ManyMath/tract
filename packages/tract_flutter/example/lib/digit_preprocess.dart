@@ -2,8 +2,8 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
-/// High-resolution raster size used before downsampling to 28x28 (9x the
-/// target), so the strokes are antialiased when shrunk.
+/// High-resolution raster size the strokes are drawn at before being shrunk
+/// to 28x28 (9x the target), so the inked bounding box is measured finely.
 const int kRasterSize = 252;
 
 /// Renders [strokes] (captured on a [boardSize] x [boardSize] board, white ink
