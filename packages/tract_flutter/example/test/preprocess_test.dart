@@ -100,6 +100,7 @@ void main() {
       final path = _modelPath();
       if (path == null) return;
       model = await Tract.loadOnnxFile(path);
+      addTearDown(model.dispose);
     });
 
     tearDown(() async => Tract.reset());
@@ -115,12 +116,11 @@ void main() {
       final px = await rasterizeStrokes(strokes, 280);
       expect(px, hasLength(28 * 28));
       expect(px.any((v) => v > 0), isTrue, reason: 'nothing was rasterized');
-      // The drawing must be normalized into the centered 20px box.
+      // Normalization must center the drawing's mass in the 28x28 frame.
       final s = _stats(px);
       expect((s.cx - 14).abs(), lessThan(4));
       expect((s.cy - 14).abs(), lessThan(4));
       expect(_predict(model, px), digit);
-      model.dispose();
     }
 
     test('a drawn "7" is recognized as 7', () async {
