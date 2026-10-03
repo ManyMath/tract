@@ -69,22 +69,24 @@ void main() {
   setUp(() => Tract.reset());
   tearDown(() => Tract.reset());
 
-  test('loadOnnxAsset reads bundle bytes and dispatches to the backend',
-      () async {
-    final fake = _FakeBackend();
-    Tract.registerBackend(fake, makeActive: true);
+  test(
+    'loadOnnxAsset reads bundle bytes and dispatches to the backend',
+    () async {
+      final fake = _FakeBackend();
+      Tract.registerBackend(fake, makeActive: true);
 
-    final model = Uint8List.fromList(List<int>.generate(64, (i) => i % 256));
-    await TractFlutter.loadOnnxAsset(
-      'assets/model.onnx',
-      bundle: _FakeBundle(model),
-    );
+      final model = Uint8List.fromList(List<int>.generate(64, (i) => i % 256));
+      await TractFlutter.loadOnnxAsset(
+        'assets/model.onnx',
+        bundle: _FakeBundle(model),
+      );
 
-    expect(fake.loaded, hasLength(1));
-    final source = fake.loaded.single;
-    expect(source, isA<BytesSource>());
-    expect((source as BytesSource).bytes.length, 64);
-  });
+      expect(fake.loaded, hasLength(1));
+      final source = fake.loaded.single;
+      expect(source, isA<BytesSource>());
+      expect((source as BytesSource).bytes.length, 64);
+    },
+  );
 
   test('ensureInitialized returns the active backend name', () async {
     Tract.registerBackend(_FakeBackend(), makeActive: true);
