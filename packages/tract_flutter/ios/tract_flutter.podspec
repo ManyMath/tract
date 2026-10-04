@@ -5,13 +5,14 @@
 Pod::Spec.new do |s|
   s.name             = 'tract_flutter'
   s.version          = '0.0.1'
-  s.summary          = 'A new Flutter FFI plugin project.'
+  s.summary          = 'Neural network inference for Flutter via the Rust tract engine.'
   s.description      = <<-DESC
-A new Flutter FFI plugin project.
+Builds the tract_ffi Rust crate (the sonos/tract ONNX/NNEF inference engine)
+with cargokit and links it into the plugin for use over dart:ffi.
                        DESC
-  s.homepage         = 'http://example.com'
+  s.homepage         = 'https://github.com/ManyMath/tract'
   s.license          = { :file => '../LICENSE' }
-  s.author           = { 'Your Company' => 'email@example.com' }
+  s.author           = 'ManyMath LLC'
 
   s.source           = { :path => '.' }
   s.source_files     = 'Classes/**/*'
