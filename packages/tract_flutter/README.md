@@ -31,5 +31,9 @@ is set up for cargokit precompiled binaries:
   `CARGOKIT_PRIVATE_KEY` repository secret: the hex private key printed by
   `dart run build_tool gen-key` (keep it secret; never commit it).
 
-Once a release exists, consuming builds download the matching signed binary
-instead of invoking cargo; with none present, cargokit builds from source.
+Once a release exists, builds on machines without `rustup` download the
+matching signed binary instead of compiling. Where `rustup` is installed,
+cargokit builds from source unless the app opts in with
+`use_precompiled_binaries: true` in a `cargokit_options.yaml` at its root. When
+no matching binary has been published, cargokit builds from source, which
+needs `rustup`.
