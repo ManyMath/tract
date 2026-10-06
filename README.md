@@ -73,5 +73,7 @@ dart run melos run test           # Dart + Flutter tests
 dart run melos run native:test    # Rust crate tests
 ```
 
-Building the Rust crate requires a recent Rust toolchain (tract's MSRV is newer
-than some distros ship); `rustup toolchain install stable` and build with it.
+Building the Rust crate requires Rust 1.91 or newer (tract's MSRV, newer than
+some distros ship); `rustup toolchain install stable` and build with it. cargokit
+does not update an installed toolchain, so run `rustup update stable` if a
+Flutter build reports an old rustc.
