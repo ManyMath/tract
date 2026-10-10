@@ -79,6 +79,28 @@ void main() {
     });
   });
 
+  group('exceptions', () {
+    test('name their own type in toString', () {
+      expect(const TractException('x').toString(), 'TractException: x');
+      expect(
+        const ModelLoadException('bad').toString(),
+        'ModelLoadException: bad',
+      );
+      expect(
+        const InferenceException('bad').toString(),
+        'InferenceException: bad',
+      );
+      expect(
+        const UnsupportedSourceException('bad').toString(),
+        'UnsupportedSourceException: bad',
+      );
+      expect(
+        const NoBackendAvailableException('none').toString(),
+        'NoBackendAvailableException: none',
+      );
+    });
+  });
+
   group('ModelSource', () {
     test('exposes its file path', () {
       const source = ModelSource.file('model.onnx');

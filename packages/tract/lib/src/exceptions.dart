@@ -4,8 +4,12 @@ class TractException implements Exception {
 
   final String message;
 
+  // Spelled out rather than taken from runtimeType, which is minified in
+  // release web builds.
+  String get _name => 'TractException';
+
   @override
-  String toString() => 'TractException: $message';
+  String toString() => '$_name: $message';
 }
 
 /// Thrown when no registered backend can run in the current environment.
@@ -18,22 +22,34 @@ class NoBackendAvailableException extends TractException {
         'No tract backend is available in this environment. '
         'Native inference is unavailable (e.g. on the web).',
   ]);
+
+  @override
+  String get _name => 'NoBackendAvailableException';
 }
 
 /// Thrown when a model fails to load (bad bytes/path, unsupported op, or an
 /// unresolved symbolic shape).
 class ModelLoadException extends TractException {
   const ModelLoadException(super.message);
+
+  @override
+  String get _name => 'ModelLoadException';
 }
 
 /// Thrown when running a model fails (e.g. an input shape/type mismatch).
 class InferenceException extends TractException {
   /// Creates an [InferenceException] with the given [message].
   const InferenceException(super.message);
+
+  @override
+  String get _name => 'InferenceException';
 }
 
 /// Thrown when a backend is asked to load a [ModelSource] kind or option it
 /// does not support.
 class UnsupportedSourceException extends TractException {
   const UnsupportedSourceException(super.message);
+
+  @override
+  String get _name => 'UnsupportedSourceException';
 }
