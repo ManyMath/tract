@@ -3,6 +3,35 @@ import 'dart:typed_data';
 import 'package:tract/tract.dart';
 import 'package:test/test.dart';
 
+class _FakeBackend extends TractBackend {
+  _FakeBackend(this.name, this.priority);
+
+  @override
+  final String name;
+
+  @override
+  final int priority;
+
+  @override
+  bool get isAvailable => true;
+
+  @override
+  Future<void> initialize() async {}
+
+  @override
+  Future<Model> loadOnnx(
+    ModelSource source, {
+    List<int>? inputShape,
+    DatumType inputType = DatumType.f32,
+  }) => throw UnimplementedError();
+
+  @override
+  Future<Model> loadNnef(ModelSource source) => throw UnimplementedError();
+
+  @override
+  Future<void> dispose() async {}
+}
+
 void main() {
   group('DatumType', () {
     test('round-trips through its code', () {
@@ -76,6 +105,38 @@ void main() {
     test('a view of the wrong type throws', () {
       final t = Tensor.float32([1, 2], [2]);
       expect(t.asInt64List, throwsStateError);
+    });
+  });
+
+  group('Tract backend selection', () {
+    setUp(Tract.reset);
+    tearDown(Tract.reset);
+
+    test('a newly registered higher-priority backend wins', () {
+      Tract.registerBackend(_FakeBackend('low', 1));
+      expect(Tract.backend.name, isNot('high'));
+      Tract.registerBackend(_FakeBackend('high', 1000));
+      expect(Tract.backend.name, 'high');
+    });
+
+    test('useBackend pins past later registrations', () {
+      Tract.registerBackend(_FakeBackend('low', 1));
+      Tract.useBackend('low');
+      Tract.registerBackend(_FakeBackend('high', 1000));
+      expect(Tract.backend.name, 'low');
+    });
+
+    test('makeActive pins past later registrations', () {
+      Tract.registerBackend(_FakeBackend('low', 1), makeActive: true);
+      Tract.registerBackend(_FakeBackend('high', 1000));
+      expect(Tract.backend.name, 'low');
+    });
+
+    test('reset clears the pin', () async {
+      Tract.registerBackend(_FakeBackend('low', 1), makeActive: true);
+      await Tract.reset();
+      Tract.registerBackend(_FakeBackend('high', 1000));
+      expect(Tract.backend.name, 'high');
     });
   });
 

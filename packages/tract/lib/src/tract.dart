@@ -26,6 +26,7 @@ class Tract {
   static final List<TractBackend> _backends = [];
   static final Set<TractBackend> _initialized = Set.identity();
   static TractBackend? _active;
+  static bool _pinned = false;
   static bool _defaultsRegistered = false;
 
   /// Registers the backends that ship with `tract`.
@@ -45,14 +46,17 @@ class Tract {
 
   /// Adds [backend] to the registry.
   ///
-  /// Pass [makeActive] to select it immediately regardless of priority.
-  /// Re-registering an instance is a no-op.
+  /// Pass [makeActive] to select it immediately regardless of priority, pinning
+  /// it as [useBackend] does. Otherwise the active backend is re-selected by
+  /// priority on next use, unless one is pinned. Re-registering an instance
+  /// is a no-op.
   static void registerBackend(TractBackend backend, {bool makeActive = false}) {
     _ensureDefaults();
     if (!_backends.contains(backend)) _backends.add(backend);
     if (makeActive) {
       _active = backend;
-    } else {
+      _pinned = true;
+    } else if (!_pinned) {
       // Force re-selection so a newly added, higher-priority backend wins.
       _active = null;
     }
@@ -67,6 +71,9 @@ class Tract {
   }
 
   /// Pins a specific registered backend by [name].
+  ///
+  /// The pin holds until another backend is pinned or [reset] is called;
+  /// registering more backends does not override it.
   static void useBackend(String name) {
     _ensureDefaults();
     final match = _backends.where((b) => b.name == name);
@@ -76,6 +83,7 @@ class Tract {
       );
     }
     _active = match.first;
+    _pinned = true;
   }
 
   static TractBackend _select() {
@@ -146,6 +154,7 @@ class Tract {
     _initialized.clear();
     _backends.clear();
     _active = null;
+    _pinned = false;
     _defaultsRegistered = false;
   }
 }
