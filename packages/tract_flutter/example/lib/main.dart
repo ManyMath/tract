@@ -1,7 +1,7 @@
 import 'dart:math' as math;
 import 'dart:typed_data';
 
-import 'package:flutter/gestures.dart' show DragStartBehavior;
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:tract_flutter/tract_flutter.dart';
@@ -234,12 +234,17 @@ class _Board extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      // Start each stroke where the pointer went down, not where the drag was
-      // recognized - on touch screens that is a whole pan slop further on.
-      dragStartBehavior: DragStartBehavior.down,
-      onPanStart: (d) => onStart(_clamp(d.localPosition)),
-      onPanUpdate: (d) => onUpdate(_clamp(d.localPosition)),
+    return RawGestureDetector(
+      gestures: {
+        _BoardPanRecognizer:
+            GestureRecognizerFactoryWithHandlers<_BoardPanRecognizer>(
+              _BoardPanRecognizer.new,
+              (r) {
+                r.onStart = (d) => onStart(_clamp(d.localPosition));
+                r.onUpdate = (d) => onUpdate(_clamp(d.localPosition));
+              },
+            ),
+      },
       child: Container(
         width: _boardSize,
         height: _boardSize,
@@ -254,6 +259,20 @@ class _Board extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+/// A pan recognizer that claims a pointer as soon as it lands on the board.
+///
+/// A plain pan has to move past its slop before it wins, and when the page
+/// scrolls (e.g. a phone in landscape) the scroll view's vertical drag wins
+/// first, so vertical strokes scrolled instead of drawing. Winning at once
+/// also starts each stroke exactly where the pointer went down.
+class _BoardPanRecognizer extends PanGestureRecognizer {
+  @override
+  void addAllowedPointer(PointerDownEvent event) {
+    super.addAllowedPointer(event);
+    resolvePointer(event.pointer, GestureDisposition.accepted);
   }
 }
 
