@@ -70,44 +70,43 @@ class NativeLibrary {
   static DynamicLibrary? open() {
     if (_attempted) return _opened;
     _attempted = true;
-    for (final candidate in _candidates()) {
+    for (final load in _loaders()) {
       try {
-        _opened = DynamicLibrary.open(candidate);
-        return _opened;
+        return _opened = load();
       } on Object {
         // Try the next candidate.
       }
     }
-    // On Apple platforms the symbols are -force_load'd into the plugin's
-    // framework, which is loaded into the host process for us - so process()
-    // resolves them even when DynamicLibrary.open cannot find the framework
-    // path directly.
-    if (Platform.isMacOS || Platform.isIOS) {
-      try {
-        final p = DynamicLibrary.process();
-        p.lookup<NativeFunction<_LastErrorNative>>('tract_last_error');
-        _opened = p;
-      } on Object {
-        // Fall through.
-      }
-    }
-    return _opened;
+    return null;
   }
 
-  static Iterable<String> _candidates() sync* {
-    if (overridePath != null) yield overridePath!;
+  static Iterable<DynamicLibrary Function()> _loaders() sync* {
+    final override = overridePath;
+    if (override != null) yield () => DynamicLibrary.open(override);
     final fromEnv = Platform.environment['TRACT_LIB'];
-    if (fromEnv != null && fromEnv.isNotEmpty) yield fromEnv;
-    // Resolved via the OS loader path / Flutter app bundle.
-    yield _fileName;
-    if (Platform.isMacOS || Platform.isIOS) {
-      yield 'tract_flutter.framework/tract_flutter';
+    if (fromEnv != null && fromEnv.isNotEmpty) {
+      yield () => DynamicLibrary.open(fromEnv);
     }
+    if (Platform.isMacOS || Platform.isIOS) {
+      // In a Flutter app the library is -force_load'd into the plugin's
+      // framework, or straight into the app binary when pods are linked
+      // statically. Try those before the bare file name, which the loader
+      // could resolve to an unrelated copy (e.g. in /usr/local/lib).
+      yield () => DynamicLibrary.open('tract_flutter.framework/tract_flutter');
+      yield () {
+        final p = DynamicLibrary.process();
+        p.lookup<NativeFunction<_LastErrorNative>>('tract_last_error');
+        return p;
+      };
+    }
+    // Resolved via the OS loader path / Flutter app bundle.
+    yield () => DynamicLibrary.open(_fileName);
     // Developer builds of the in-repo crate, searched from the cwd upward.
     var dir = Directory.current.absolute;
     for (var i = 0; i < 6; i++) {
       for (final profile in ['release', 'debug']) {
-        yield '${dir.path}/native/tract_ffi/target/$profile/$_fileName';
+        final path = '${dir.path}/native/tract_ffi/target/$profile/$_fileName';
+        yield () => DynamicLibrary.open(path);
       }
       final parent = dir.parent;
       if (parent.path == dir.path) break;
