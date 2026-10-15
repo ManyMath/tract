@@ -1,0 +1,91 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Cancel superseded runs on the same ref.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust:
+    name: Rust (tract_ffi)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: native/tract_ffi
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native/tract_ffi
+      - run: cargo fmt --all --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test
+      # The crate must also compile for Android...
+      - run: rustup target add aarch64-linux-android
+      - run: cargo check --target aarch64-linux-android
+      # ...and for Windows.
+      - run: rustup target add x86_64-pc-windows-gnu
+      - run: cargo check --target x86_64-pc-windows-gnu
+
+  analyze-test:
+    name: Analyze & test (Dart/Flutter)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      # The pub workspace includes Flutter packages, so resolve with Flutter.
+      - run: flutter pub get
+      - name: Check formatting
+        run: dart format --output none --set-exit-if-changed packages/tract packages/tract_flutter/lib packages/tract_flutter/example/lib
+      - run: dart analyze packages/tract
+      - run: flutter analyze packages/tract_flutter
+      # Build the native lib so the FFI inference tests run (they self-skip
+      # otherwise); the pure-Dart API tests always run.
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --manifest-path native/tract_ffi/Cargo.toml
+      - run: dart test packages/tract
+      # Scope to the plugin's own tests (not the vendored cargokit tests).
+      - run: flutter test packages/tract_flutter/test
+      # Example tests: pure stroke-normalization plus an end-to-end check that a
+      # rasterized drawn digit is classified correctly by the MNIST model.
+      - name: Example tests
+        working-directory: packages/tract_flutter/example
+        run: flutter test
+      # Verify the package compiles to JavaScript (web stub, no dart:ffi).
+      - run: dart compile js packages/tract/example/web_main.dart -o /tmp/tract_web.js
+
+  build:
+    name: Build example (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [linux, apk]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native/tract_ffi
+      - name: Install Linux desktop build deps
+        if: matrix.target == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build libgtk-3-dev clang cmake pkg-config
+      - run: flutter pub get
+      - name: Build ${{ matrix.target }}
+        working-directory: packages/tract_flutter/example
+        run: flutter build ${{ matrix.target }} --debug
