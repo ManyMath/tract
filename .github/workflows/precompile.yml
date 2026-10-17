@@ -14,6 +14,11 @@ on:
   push:
     tags: ['v*']
 
+# Creating the release and uploading assets needs write access, which the
+# default GITHUB_TOKEN may not have.
+permissions:
+  contents: write
+
 env:
   REPO: ManyMath/tract
   BUILD_TOOL: packages/tract_flutter/cargokit/build_tool
@@ -40,6 +45,10 @@ jobs:
 
   android:
     name: Precompile (Android ABIs)
+    # cargokit creates the precompiled_<hash> release if it is missing but
+    # does not handle another job creating it at the same moment, so let the
+    # Linux job create it first.
+    needs: linux
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
