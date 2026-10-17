@@ -45,22 +45,17 @@ jobs:
           channel: stable
       # The pub workspace includes Flutter packages, so resolve with Flutter.
       - run: flutter pub get
-      - name: Check formatting
-        run: dart format --output none --set-exit-if-changed packages/tract packages/tract_flutter/lib packages/tract_flutter/example/lib
-      - run: dart analyze packages/tract
-      - run: flutter analyze packages/tract_flutter
+      # The melos scripts in the root pubspec.yaml are the single definition
+      # of what gets formatted, analyzed and tested, locally and here.
+      - run: dart run melos run format
+      - run: dart run melos run analyze
       # Build the native lib so the FFI inference tests run (they self-skip
-      # otherwise); the pure-Dart API tests always run.
+      # otherwise); the pure-Dart API tests always run. `test` covers tract,
+      # the plugin's own tests (not the vendored cargokit ones) and the
+      # example app, including its end-to-end MNIST checks.
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo build --manifest-path native/tract_ffi/Cargo.toml
-      - run: dart test packages/tract
-      # Scope to the plugin's own tests (not the vendored cargokit tests).
-      - run: flutter test packages/tract_flutter/test
-      # Example tests: pure stroke-normalization plus an end-to-end check that a
-      # rasterized drawn digit is classified correctly by the MNIST model.
-      - name: Example tests
-        working-directory: packages/tract_flutter/example
-        run: flutter test
+      - run: dart run melos run test
       # Verify the package compiles to JavaScript (web stub, no dart:ffi).
       - run: dart compile js packages/tract/example/web_main.dart -o /tmp/tract_web.js
 
