@@ -28,12 +28,14 @@ melos:
         dart format --output none --set-exit-if-changed
         packages/tract packages/tract_flutter/lib packages/tract_flutter/test
         packages/tract_flutter/example/lib packages/tract_flutter/example/test
+        packages/tract_flutter/example/integration_test
     format:fix:
       description: Apply Dart formatting.
       run: >-
         dart format
         packages/tract packages/tract_flutter/lib packages/tract_flutter/test
         packages/tract_flutter/example/lib packages/tract_flutter/example/test
+        packages/tract_flutter/example/integration_test
     test:
       description: Run Dart and Flutter tests.
       # dart/flutter test only run tract's build hook (which builds the native

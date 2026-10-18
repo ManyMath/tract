@@ -57,7 +57,9 @@ cd packages/tract_flutter/example && flutter run
 | Web | Not supported yet (no `dart:ffi`; tract is not compiled to WASM here) |
 
 Linux runs the CLI, the tests and the Flutter example end to end; Android runs
-the Flutter example end to end (on an API 33 emulator).
+the Flutter example end to end (on an API 33 emulator). The example's
+integration test checks a platform in one command:
+`cd packages/tract_flutter/example && flutter test integration_test -d <device>`.
 Web inference would require compiling tract to WASM and calling it via JS
 interop, which the build hook does not do - it is a known gap.
 
