@@ -6,14 +6,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:tract_flutter/tract_flutter.dart';
 import 'package:tract_flutter_example/digit_preprocess.dart';
 
-bool get _nativeAvailable {
-  try {
-    return Tract.backend.isAvailable;
-  } on NoBackendAvailableException {
-    return false;
-  }
-}
-
 String? _modelPath() {
   for (final base in ['assets', 'packages/tract_flutter/example/assets']) {
     final p = '$base/mnist-8.onnx';
@@ -96,7 +88,6 @@ void main() {
     late Model model;
 
     setUp(() async {
-      if (!_nativeAvailable) return;
       final path = _modelPath();
       if (path == null) return;
       model = await Tract.loadOnnxFile(path);
@@ -109,8 +100,8 @@ void main() {
       int digit,
       List<List<Offset>> strokes,
     ) async {
-      if (!_nativeAvailable || _modelPath() == null) {
-        markTestSkipped('tract_ffi library / model asset not available');
+      if (_modelPath() == null) {
+        markTestSkipped('model asset not found');
         return;
       }
       final px = await rasterizeStrokes(strokes, 280);

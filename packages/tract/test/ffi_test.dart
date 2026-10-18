@@ -7,17 +7,6 @@ import 'dart:typed_data';
 import 'package:tract/tract.dart';
 import 'package:test/test.dart';
 
-/// Whether a native backend can load the `tract_ffi` library. When the crate
-/// has not been built (`cargo build --manifest-path native/tract_ffi/Cargo.toml`)
-/// these tests self-skip, just like on CI without an inference build.
-bool get _nativeAvailable {
-  try {
-    return Tract.backend.isAvailable;
-  } on NoBackendAvailableException {
-    return false;
-  }
-}
-
 /// Locates a committed asset regardless of whether tests run from the repo root
 /// or the package directory.
 String? _asset(String name) {
@@ -37,11 +26,12 @@ void main() {
   setUp(() async => Tract.reset());
   tearDown(() async => Tract.reset());
 
+  test('the build hook bundles the native library', () {
+    expect(Tract.backend.name, 'ffi');
+    expect(Tract.backend.isAvailable, isTrue);
+  });
+
   test('runs the identity ONNX model end to end', () async {
-    if (!_nativeAvailable) {
-      markTestSkipped('tract_ffi library not built');
-      return;
-    }
     final fixture = _asset('identity.onnx');
     if (fixture == null) {
       markTestSkipped('identity.onnx fixture not found');
@@ -62,10 +52,6 @@ void main() {
   });
 
   test('classifies real MNIST digits correctly', () async {
-    if (!_nativeAvailable) {
-      markTestSkipped('tract_ffi library not built');
-      return;
-    }
     final modelPath = _asset('mnist-8.onnx');
     final samplesPath = _asset('mnist_samples.bin');
     if (modelPath == null || samplesPath == null) {
@@ -101,10 +87,6 @@ void main() {
   });
 
   test('a negative inputShape dimension throws ArgumentError', () async {
-    if (!_nativeAvailable) {
-      markTestSkipped('tract_ffi library not built');
-      return;
-    }
     final fixture = _asset('identity.onnx');
     if (fixture == null) {
       markTestSkipped('identity.onnx fixture not found');
@@ -117,10 +99,6 @@ void main() {
   });
 
   test('loading garbage bytes throws ModelLoadException', () async {
-    if (!_nativeAvailable) {
-      markTestSkipped('tract_ffi library not built');
-      return;
-    }
     final garbage = Uint8List.fromList(List<int>.generate(32, (i) => i));
     expect(
       () => Tract.loadOnnxBytes(garbage),
