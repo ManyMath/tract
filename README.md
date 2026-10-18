@@ -1,8 +1,7 @@
 # tract
 
 Neural network inference for Dart and Flutter across platforms. Native builds
-require Rust in addition to Dart or Flutter. Precompiled binaries are planned
-to remove that build requirement.
+require Rust in addition to Dart or Flutter.
 
 It wraps the Rust [`tract`](https://github.com/sonos/tract) inference engine,
 which loads and runs ONNX and NNEF models. tract is pure Rust with no system
@@ -12,9 +11,9 @@ This is a [melos](https://melos.invertase.dev) monorepo:
 
 | Package | What it is |
 |---|---|
-| [`packages/tract`](packages/tract) | Pure Dart (no Flutter); works in CLI tools. Loads and runs models over `dart:ffi`, with a pluggable backend registry. |
-| [`packages/tract_flutter`](packages/tract_flutter) | Flutter plugin. Builds the native library automatically (via cargokit) and re-exports the `tract` API. |
-| [`native/tract_ffi`](native/tract_ffi) | Rust crate (the C ABI behind the FFI backend). Wraps `tract-onnx`/`tract-nnef`: load an ONNX/NNEF model, then run it on input tensors. |
+| [`packages/tract`](packages/tract) | Pure Dart (no Flutter); works in CLI tools. Loads and runs models over `dart:ffi`, with a pluggable backend registry. Its build hook compiles the bundled Rust crate. |
+| [`packages/tract/native`](packages/tract/native) | The `tract_ffi` Rust crate (the C ABI behind the FFI backend). Wraps `tract-onnx`/`tract-nnef`: load an ONNX/NNEF model, then run it on input tensors. |
+| [`packages/tract_flutter`](packages/tract_flutter) | Flutter package. Re-exports the `tract` API and adds helpers for loading models from Flutter assets. |
 
 ## Quick start (Dart CLI)
 
@@ -28,7 +27,10 @@ print(outputs.single.asFloat32List());
 model.dispose();
 ```
 
-Build the native library first: `cargo build --manifest-path native/tract_ffi/Cargo.toml`.
+There is no separate native build step: `tract`'s build hook (via
+[`native_toolchain_rust`](https://pub.dev/packages/native_toolchain_rust))
+compiles the crate the first time you `dart run`, `dart test`, `dart build` or
+build a Flutter app, and bundles it for the target platform.
 
 ### Runnable demos
 
@@ -48,17 +50,16 @@ cd packages/tract_flutter/example && flutter run
 | Host | Status |
 |---|---|
 | Linux | Working |
-| macOS | Expected to work (pure-Rust engine) |
-| Windows | Expected to work (pure-Rust engine) |
-| Android | Expected to work (pure-Rust engine) |
-| iOS | Expected to work (pure-Rust engine) |
+| Android | Working |
+| macOS | Expected to work (built by the same hook, not yet run) |
+| Windows | Expected to work (built by the same hook, not yet run) |
+| iOS | Expected to work (built by the same hook, not yet run) |
 | Web | Not supported yet (no `dart:ffi`; tract is not compiled to WASM here) |
 
-The native crate, its FFI bindings and ONNX inference are verified on Linux.
-The other native targets build from the same pure-Rust engine; bundling/loading
-on each is set up but not yet exercised end to end. Web inference would require
-compiling tract to WASM and calling it via JS interop, which cargokit does not
-build - it is a known gap.
+Linux runs the CLI, the tests and the Flutter example end to end; Android runs
+the Flutter example end to end (on an API 33 emulator).
+Web inference would require compiling tract to WASM and calling it via JS
+interop, which the build hook does not do - it is a known gap.
 
 ## Development
 
@@ -66,14 +67,12 @@ Driven by [melos](https://melos.invertase.dev) (config lives in the root
 `pubspec.yaml`). After `dart pub get` (or `flutter pub get`):
 
 ```sh
-dart run melos run native:build   # build the Rust shared library
 dart run melos run analyze        # analyze tract + tract_flutter
 dart run melos run format         # check Dart formatting (format:fix to apply)
 dart run melos run test           # Dart + Flutter tests
 dart run melos run native:test    # Rust crate tests
 ```
 
-Building the Rust crate requires Rust 1.91 or newer (tract's MSRV, newer than
-some distros ship); `rustup toolchain install stable` and build with it. cargokit
-does not update an installed toolchain, so run `rustup update stable` if a
-Flutter build reports an old rustc.
+The crate's `rust-toolchain.toml` pins the Rust version (at least 1.91, tract's
+MSRV) and every target the hook may build for; rustup installs them on first
+use. Android builds also need NDK 27 or newer.

@@ -5,11 +5,12 @@ no system dependencies that need to be installed.  Pure Dart (works in CLI
 tools) with model inference from the Rust [`tract`](https://github.com/sonos/tract)
 engine over FFI.
 
-For Flutter apps, see the `tract_flutter` package, which builds the native
-library for you via cargokit and should 'just work'.
-
-The only build-time requirement beyond Dart/Flutter is Rust.  That may be
-worked-around with precompiled binaries (TODO).
+The Rust crate ships inside this package (`native/`), and a build hook
+compiles it for the platform you run or build for, so `dart run`, `dart test`,
+`dart build` and Flutter builds pick it up automatically. The only build-time
+requirement beyond Dart/Flutter is Rust (`rustup`); the first build installs the
+pinned toolchain. For Flutter apps, `tract_flutter` adds helpers for loading
+models from assets.
 
 ```dart
 import 'package:tract/tract.dart';
@@ -36,10 +37,10 @@ model.dispose();
 | Target | Status |
 |---|---|
 | Linux | Working |
-| macOS | Should work (pure-Rust engine) |
-| Windows | Should work (pure-Rust engine) |
-| Android | Should work (pure-Rust engine) |
-| iOS | Should work (pure-Rust engine) |
+| Android | Working |
+| macOS | Should work (built by the same hook, not yet run) |
+| Windows | Should work (built by the same hook, not yet run) |
+| iOS | Should work (built by the same hook, not yet run) |
 | Web | Not supported yet (no `dart:ffi`; tract is not compiled to WASM here) |
 
 [`Tract`]: https://pub.dev/documentation/tract/latest/tract/Tract-class.html

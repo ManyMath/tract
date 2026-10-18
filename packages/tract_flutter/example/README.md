@@ -9,5 +9,5 @@ ONNX model from the ONNX Model Zoo, running on-device through `tract_flutter`.
 flutter run
 ```
 
-Building needs a Rust toolchain (`rustup`); cargokit compiles the `tract_ffi`
-crate as part of the Flutter build.
+Building needs a Rust toolchain (`rustup`); `tract`'s build hook compiles the
+`tract_ffi` crate as part of the Flutter build.

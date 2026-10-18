@@ -8,6 +8,9 @@
 - FFI backend that loads and runs ONNX and tract NNEF models via the `tract_ffi`
   Rust library (the sonos/tract engine). Web-safe via conditional imports (no
   native inference on web yet).
+- The `tract_ffi` crate ships in `native/`; a build hook (native_toolchain_rust)
+  compiles and bundles it for the target platform on `dart run`, `dart test`,
+  `dart build` and Flutter builds.
 - ONNX loading from a file or in-memory bytes, with an optional `inputShape`
   override to pin input 0 and resolve symbolic dimensions before optimization.
 - `Tensor.float32`/`float64`/`int32`/`int64`/`uint8` constructors and matching
