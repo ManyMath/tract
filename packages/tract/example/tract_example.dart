@@ -1,17 +1,16 @@
 // Classifies handwritten digits from the command line using `tract` (pure Dart,
 // no Flutter), running the real MNIST ONNX model from the ONNX Model Zoo.
 //
-// Build the native library first:
-//   cargo build --manifest-path native/tract_ffi/Cargo.toml
-// then, from the repo root:
+// From the repo root:
 //   dart run packages/tract/example/tract_example.dart       # classify all, show digit 0
 //   dart run packages/tract/example/tract_example.dart 7     # also render sample #7
+//
+// The first run compiles the native library through tract's build hook, which
+// needs a Rust toolchain (rustup).
 //
 // Each bundled sample is a real MNIST test image with its true label, so the
 // prediction is checkable: the printed digit must match what you see and the
 // label, and it could not be produced without running the network.
-//
-// If the library is elsewhere, point to it with TRACT_LIB=/path/to/lib.
 
 import 'dart:io';
 import 'dart:math' as math;
@@ -44,12 +43,8 @@ Future<void> main(List<String> args) async {
   final TractBackend backend;
   try {
     backend = Tract.backend;
-  } on NoBackendAvailableException {
-    stderr.writeln(
-      'Could not load the tract_ffi library. Build it with\n'
-      '  cargo build --manifest-path native/tract_ffi/Cargo.toml\n'
-      'or point TRACT_LIB at an existing build.',
-    );
+  } on NoBackendAvailableException catch (e) {
+    stderr.writeln(e.message);
     exitCode = 1;
     return;
   }

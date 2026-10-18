@@ -1,0 +1,25 @@
+# The toolchain the build hook (hook/build.dart) builds tract_ffi with.
+# native_toolchain_rust requires an exact version, plus every target a Dart or
+# Flutter app may build for; rustup installs both on first use. tract 0.23
+# needs Rust 1.91 or newer.
+[toolchain]
+channel = "1.94.1"
+targets = [
+  # Android
+  "aarch64-linux-android",
+  "armv7-linux-androideabi",
+  "x86_64-linux-android",
+  # iOS (device, Apple-silicon and Intel simulators)
+  "aarch64-apple-ios",
+  "aarch64-apple-ios-sim",
+  "x86_64-apple-ios",
+  # macOS
+  "aarch64-apple-darwin",
+  "x86_64-apple-darwin",
+  # Windows
+  "aarch64-pc-windows-msvc",
+  "x86_64-pc-windows-msvc",
+  # Linux
+  "aarch64-unknown-linux-gnu",
+  "x86_64-unknown-linux-gnu",
+]

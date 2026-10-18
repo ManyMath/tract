@@ -10,8 +10,9 @@ repository = "https://github.com/ManyMath/tract"
 
 [lib]
 name = "tract_ffi"
-# cdylib for FFI from Dart; staticlib for static linking (e.g. iOS) later;
-# rlib so in-repo examples/tests can call the API directly.
+# cdylib and staticlib are what the package's build hook (hook/build.dart) can
+# bundle, depending on the link mode the app asks for; native_toolchain_rust
+# requires both. rlib lets the crate's own tests call the API directly.
 crate-type = ["cdylib", "staticlib", "rlib"]
 
 [dependencies]

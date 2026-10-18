@@ -14,13 +14,17 @@ class TractException implements Exception {
 
 /// Thrown when no registered backend can run in the current environment.
 ///
-/// On the web there is currently no native inference backend; load and run
-/// models on a native platform, or register a custom [TractBackend].
+/// The native backend needs the `tract_ffi` library that tract's build hook
+/// bundles, which happens for `dart run`, `dart test`, `dart build` and Flutter
+/// builds, but not `dart compile` or the web. Elsewhere, register a custom
+/// [TractBackend].
 class NoBackendAvailableException extends TractException {
   const NoBackendAvailableException([
     super.message =
-        'No tract backend is available in this environment. '
-        'Native inference is unavailable (e.g. on the web).',
+        'No tract backend is available. Native inference needs the tract_ffi '
+        "library, which tract's build hook bundles for `dart run`, "
+        '`dart test`, `dart build` and Flutter builds (not `dart compile`, '
+        'and not the web).',
   ]);
 
   @override

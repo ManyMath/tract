@@ -15,9 +15,6 @@ doc/api/
 target/
 **/*.rs.bk
 
-# cargokit signing private key (set as a CI secret, never commit)
-.cargokit_private_key
-
 # Melos
 .melos_tool/
 

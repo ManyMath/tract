@@ -1,8 +1,8 @@
 name: tract_flutter
 description: >-
-  Neural network inference for Flutter with the goal of no additional system
-  dependencies. Integrates the `tract` package and uses cargokit to build the
-  native Rust tract library and use it via FFI.
+  Flutter helpers for the tract inference package: load ONNX/NNEF models from
+  Flutter assets. Re-exports tract, which builds its Rust engine with a build
+  hook.
 version: 0.0.1
 repository: https://github.com/ManyMath/tract
 issue_tracker: https://github.com/ManyMath/tract/issues
@@ -28,17 +28,3 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^6.0.0
-
-flutter:
-  plugin:
-    platforms:
-      android:
-        ffiPlugin: true
-      ios:
-        ffiPlugin: true
-      linux:
-        ffiPlugin: true
-      macos:
-        ffiPlugin: true
-      windows:
-        ffiPlugin: true

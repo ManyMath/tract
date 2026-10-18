@@ -106,7 +106,7 @@ fn catch_panic<T>(f: impl FnOnce() -> TractResult<T>) -> TractResult<T> {
 
 /// Returns this library's version as a static NUL-terminated string.
 ///
-/// Doubles as a stable exported symbol for `-force_load` on Apple platforms.
+/// The Dart `FfiBackend` also calls it to check that the library is present.
 #[no_mangle]
 pub extern "C" fn tract_version() -> *const c_char {
     concat!(env!("CARGO_PKG_VERSION"), "\0").as_ptr() as *const c_char
@@ -695,7 +695,7 @@ mod tests {
         // A float32[3] -> float32[3] Identity model, shared with the Dart tests.
         // Pinning input 0 to [4] overrides the declared shape, so the model then
         // accepts a 4-element input.
-        let onnx = include_bytes!("../../../packages/tract/test/fixtures/identity.onnx");
+        let onnx = include_bytes!("../../test/fixtures/identity.onnx");
         let shape: [usize; 1] = [4];
         let model = unsafe {
             tract_onnx_model_load_bytes_with_shape(

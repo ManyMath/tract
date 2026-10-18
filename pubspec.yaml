@@ -36,14 +36,13 @@ melos:
         packages/tract_flutter/example/lib packages/tract_flutter/example/test
     test:
       description: Run Dart and Flutter tests.
+      # dart/flutter test only run tract's build hook (which builds the native
+      # library) for the package they are run in, so run them from each one.
       run: >-
-        dart test packages/tract &&
-        flutter test packages/tract_flutter/test packages/tract_flutter/example/test
-    native:build:
-      description: Build the tract_ffi shared library (for CLI/dev use).
-      # cd into the crate so its rust-toolchain.toml (stable, for tract's MSRV)
-      # is honored.
-      run: cd native/tract_ffi && cargo build
+        (cd packages/tract && dart test) &&
+        (cd packages/tract_flutter && flutter test) &&
+        (cd packages/tract_flutter/example && flutter test)
     native:test:
       description: Run the Rust crate tests.
-      run: cd native/tract_ffi && cargo test
+      # cd into the crate so its pinned rust-toolchain.toml is honored.
+      run: cd packages/tract/native && cargo test

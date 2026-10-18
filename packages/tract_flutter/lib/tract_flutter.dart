@@ -1,8 +1,8 @@
 /// Flutter integration for the `tract` package.
 ///
-/// This package contributes the native `tract_ffi` library to your Flutter app
-/// (built automatically via cargokit) and re-exports the full `tract` API.
-/// In most cases you only need the re-exported [Tract] entry point:
+/// This package re-exports the full `tract` API, whose build hook compiles the
+/// native `tract_ffi` library and bundles it with your app on every native
+/// platform, and adds helpers for loading models from Flutter assets:
 ///
 /// ```dart
 /// import 'package:tract_flutter/tract_flutter.dart';
