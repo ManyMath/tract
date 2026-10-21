@@ -30,10 +30,7 @@ use std::sync::Arc;
 use tract_onnx::prelude::*;
 use tract_onnx::tract_core::model::TypedRunnableModel;
 
-#[cfg(all(
-    target_family = "wasm",
-    any(target_os = "unknown", target_os = "none")
-))]
+#[cfg(all(target_family = "wasm", any(target_os = "unknown", target_os = "none")))]
 #[no_mangle]
 unsafe extern "Rust" fn __getrandom_v03_custom(
     dest: *mut u8,
@@ -896,13 +893,15 @@ unsafe fn decode_28x28_tensor(
     const BYTES_F32_28X28: usize = PIXELS_28X28 * std::mem::size_of::<f32>();
 
     if pixels.is_null() {
-        return Err(err_buffer(TRACT_STATUS_INVALID_INPUT, "null pixels pointer"));
+        return Err(err_buffer(
+            TRACT_STATUS_INVALID_INPUT,
+            "null pixels pointer",
+        ));
     }
     let raw = std::slice::from_raw_parts(pixels, pixels_len);
     if pixels_len == PIXELS_28X28 {
         let floats: Vec<f32> = raw.iter().map(|&b| b as f32).collect();
-        let f_bytes =
-            std::slice::from_raw_parts(floats.as_ptr() as *const u8, BYTES_F32_28X28);
+        let f_bytes = std::slice::from_raw_parts(floats.as_ptr() as *const u8, BYTES_F32_28X28);
         catch_panic(|| Tensor::from_raw_dt(DatumType::F32, shape, f_bytes))
             .map_err(|e| err_buffer(TRACT_STATUS_INVALID_INPUT, e.to_string()))
     } else if pixels_len == BYTES_F32_28X28 {
@@ -911,9 +910,7 @@ unsafe fn decode_28x28_tensor(
     } else {
         Err(err_buffer(
             TRACT_STATUS_INVALID_INPUT,
-            format!(
-                "expected 784 (u8) or 3136 (f32) bytes for a 28x28 input, got {pixels_len}"
-            ),
+            format!("expected 784 (u8) or 3136 (f32) bytes for a 28x28 input, got {pixels_len}"),
         ))
     }
 }
@@ -1270,10 +1267,7 @@ mod tests {
         let onnx = include_bytes!("../../test/fixtures/identity.onnx");
         let input: [f32; 3] = [1.25, -2.5, 4.75];
         let input_bytes = unsafe {
-            std::slice::from_raw_parts(
-                input.as_ptr() as *const u8,
-                std::mem::size_of_val(&input),
-            )
+            std::slice::from_raw_parts(input.as_ptr() as *const u8, std::mem::size_of_val(&input))
         };
 
         // 1. One-shot / cached tract_infer_bytes via staged WASM-style buffers
@@ -1297,8 +1291,7 @@ mod tests {
 
         // 2. Stateful tract_model_infer_f32
         unsafe {
-            let model =
-                tract_onnx_model_load_bytes(onnx.as_ptr() as *const c_void, onnx.len());
+            let model = tract_onnx_model_load_bytes(onnx.as_ptr() as *const c_void, onnx.len());
             assert!(!model.is_null());
             let shape: [usize; 1] = [3];
             let buf = tract_model_infer_f32(
@@ -1339,8 +1332,7 @@ mod tests {
                 let buf = tract_infer_28x28(model, pixels_u8.as_ptr(), pixels_u8.len());
                 assert_eq!(tract_buffer_status(buf), TRACT_STATUS_OK);
                 assert_eq!(tract_buffer_len(buf), 10 * std::mem::size_of::<f32>());
-                let logits =
-                    std::slice::from_raw_parts(tract_buffer_data(buf) as *const f32, 10);
+                let logits = std::slice::from_raw_parts(tract_buffer_data(buf) as *const f32, 10);
                 let pred = logits
                     .iter()
                     .enumerate()
@@ -1362,8 +1354,7 @@ mod tests {
                 );
                 assert_eq!(tract_buffer_status(buf), TRACT_STATUS_OK);
                 assert_eq!(tract_buffer_len(buf), 10 * std::mem::size_of::<f32>());
-                let logits =
-                    std::slice::from_raw_parts(tract_buffer_data(buf) as *const f32, 10);
+                let logits = std::slice::from_raw_parts(tract_buffer_data(buf) as *const f32, 10);
                 let pred = logits
                     .iter()
                     .enumerate()
