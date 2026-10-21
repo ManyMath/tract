@@ -4,7 +4,7 @@ version = "0.0.1"
 edition = "2021"
 # tract 0.23's MSRV.
 rust-version = "1.91"
-description = "C ABI around the tract neural network inference engine."
+description = "Portable C ABI around the tract neural network inference engine (native + wasm32)."
 license = "MIT"
 repository = "https://github.com/ManyMath/tract"
 
@@ -12,13 +12,19 @@ repository = "https://github.com/ManyMath/tract"
 name = "tract_ffi"
 # cdylib and staticlib are what the package's build hook (hook/build.dart) can
 # bundle, depending on the link mode the app asks for; native_toolchain_rust
-# requires both. rlib lets the crate's own tests call the API directly.
+# requires both. cdylib is also used for wasm32-unknown-unknown (loaded over JS
+# interop on the web). rlib lets the crate's own tests call the API directly.
 crate-type = ["cdylib", "staticlib", "rlib"]
 
 [dependencies]
 # The sonos/tract inference engine. tract-onnx pulls in tract-hir/tract-core and
 # loads ONNX graphs; tract-nnef loads tract's own NNEF model format. Both are
 # pure Rust with no system dependencies, so they cross-compile to Android, iOS,
-# Windows and macOS without extra toolchains.
+# Windows, macOS, Linux, and wasm32-unknown-unknown without extra toolchains.
 tract-onnx = "0.23"
 tract-nnef = "0.23"
+
+[target.'cfg(all(target_family = "wasm", any(target_os = "unknown", target_os = "none")))'.dependencies]
+# Used to provide a pure-Rust `__getrandom_v03_custom` implementation on
+# wasm32-unknown-unknown so `tract_ffi.wasm` has zero `wasm-bindgen` imports.
+getrandom = "0.4"

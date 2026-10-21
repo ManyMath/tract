@@ -1,0 +1,5 @@
+# Enable getrandom's custom backend on bare WebAssembly targets
+# (wasm32-unknown-unknown) so `tract-onnx-opl` compiles cleanly to WebAssembly
+# without pulling in `wasm-bindgen` or `js-sys`.
+[target.'cfg(all(target_family = "wasm", any(target_os = "unknown", target_os = "none")))']
+rustflags = ["--cfg", 'getrandom_backend="custom"']

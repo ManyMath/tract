@@ -1039,6 +1039,7 @@ dependencies = [
 name = "tract_ffi"
 version = "0.0.1"
 dependencies = [
+ "getrandom",
  "tract-nnef",
  "tract-onnx",
 ]

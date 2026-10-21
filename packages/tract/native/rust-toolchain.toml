@@ -22,4 +22,6 @@ targets = [
   # Linux
   "aarch64-unknown-linux-gnu",
   "x86_64-unknown-linux-gnu",
+  # WebAssembly
+  "wasm32-unknown-unknown",
 ]

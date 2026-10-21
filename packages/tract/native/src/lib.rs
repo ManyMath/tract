@@ -1,14 +1,20 @@
-//! C ABI for the `tract` package's neural-network inference.
+//! Portable C ABI for the `tract` package's neural-network inference.
 //!
-//! The Dart `FfiBackend` calls these functions. A model is loaded once
-//! (`tract_onnx_model_load_*` / `tract_nnef_model_load_*`) into an opaque
-//! [`TractModel`], then run any number of times with a set of input tensors,
-//! producing a set of output tensors. Tensors cross the boundary as opaque
-//! [`TractValue`] handles carrying a datum type, a shape and a contiguous,
-//! native-endian data buffer.
+//! One crate, two targets, one ABI:
+//! - native (`cdylib`/`staticlib`) called from Dart over `dart:ffi`;
+//! - `wasm32-unknown-unknown` called from Dart or JavaScript over
+//!   `WebAssembly.instantiate`, with no `wasm-bindgen` glue.
 //!
-//! Errors are reported out-of-band: fallible calls return null / a negative
-//! count and stash a message retrievable with [`tract_last_error`].
+//! The Dart `FfiBackend` calls the model/value functions (`tract_onnx_model_load_*`,
+//! `tract_nnef_model_load_*`, `tract_value_*`, `tract_model_run`). In addition,
+//! WebAssembly and portable buffer callers can stage linear-memory buffers via
+//! [`tract_alloc`]/[`tract_free`] (or [`tract_wasm_alloc`]/[`tract_wasm_free`])
+//! and invoke [`tract_infer_28x28`], [`tract_infer_bytes`], or
+//! [`tract_model_infer_f32`], inspecting results via [`tract_buffer_status`],
+//! [`tract_buffer_data`], [`tract_buffer_len`], and [`tract_buffer_free`].
+//!
+//! Errors are reported both out-of-band via [`tract_last_error`] (and
+//! [`tract_last_error_len`]) and in-band via [`TractBuffer`] status codes.
 
 // The exported functions take opaque handles produced by this library; the
 // caller is responsible for their validity, which makes the raw-pointer derefs
@@ -17,11 +23,59 @@
 
 use std::cell::RefCell;
 use std::ffi::{CStr, CString};
+use std::hash::{Hash, Hasher};
 use std::os::raw::{c_char, c_void};
 use std::sync::Arc;
 
 use tract_onnx::prelude::*;
 use tract_onnx::tract_core::model::TypedRunnableModel;
+
+#[cfg(all(
+    target_family = "wasm",
+    any(target_os = "unknown", target_os = "none")
+))]
+#[no_mangle]
+unsafe extern "Rust" fn __getrandom_v03_custom(
+    dest: *mut u8,
+    len: usize,
+) -> Result<(), getrandom::Error> {
+    // Deterministic SplitMix64 fill so wasm32-unknown-unknown builds require
+    // zero wasm-bindgen / Web Crypto imports when linking tract-onnx-opl.
+    let slice = if len == 0 {
+        &mut [][..]
+    } else {
+        core::slice::from_raw_parts_mut(dest, len)
+    };
+    let mut state: u64 = 0x9e37_79b9_7f4a_7c15;
+    for chunk in slice.chunks_mut(8) {
+        state = state.wrapping_add(0x9e37_79b9_7f4a_7c15);
+        let mut z = state;
+        z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+        z = z ^ (z >> 31);
+        let bytes = z.to_le_bytes();
+        chunk.copy_from_slice(&bytes[..chunk.len()]);
+    }
+    Ok(())
+}
+
+/// Buffer status: success.
+pub const TRACT_STATUS_OK: i32 = 0;
+/// Buffer status: model load or optimization failure.
+pub const TRACT_STATUS_MODEL_ERROR: i32 = 1;
+/// Buffer status: invalid arguments (null pointers, mismatched byte lengths, etc.).
+pub const TRACT_STATUS_INVALID_INPUT: i32 = 2;
+/// Buffer status: internal inference or panic error.
+pub const TRACT_STATUS_INTERNAL_ERROR: i32 = 3;
+
+/// Opaque result buffer handed across the portable C/WASM ABI as a raw pointer.
+///
+/// Rust allocates it, the caller reads it through the `tract_buffer_*`
+/// accessors and must release it with [`tract_buffer_free`].
+pub struct TractBuffer {
+    data: Vec<u8>,
+    status: i32,
+}
 
 // Datum type codes, mirrored by the Dart side (see `DatumType` in tract).
 const DT_F32: i32 = 0;
@@ -89,6 +143,12 @@ pub extern "C" fn tract_last_error() -> *const c_char {
     LAST_ERROR.with(|e| e.borrow().as_ptr())
 }
 
+/// Returns the byte length (excluding the NUL terminator) of [`tract_last_error`].
+#[no_mangle]
+pub extern "C" fn tract_last_error_len() -> usize {
+    LAST_ERROR.with(|e| e.borrow().as_bytes().len())
+}
+
 /// Runs `f`, turning a panic into an error. A panic must not unwind out of an
 /// `extern "C"` fn - Rust aborts the whole process when one tries - so an
 /// assertion tripped deep inside tract by a malformed model would otherwise
@@ -104,12 +164,155 @@ fn catch_panic<T>(f: impl FnOnce() -> TractResult<T>) -> TractResult<T> {
     })
 }
 
+static VERSION: &str = env!("CARGO_PKG_VERSION");
+
 /// Returns this library's version as a static NUL-terminated string.
 ///
 /// The Dart `FfiBackend` also calls it to check that the library is present.
 #[no_mangle]
 pub extern "C" fn tract_version() -> *const c_char {
     concat!(env!("CARGO_PKG_VERSION"), "\0").as_ptr() as *const c_char
+}
+
+/// Pointer to the crate version as UTF-8 bytes (not NUL-terminated); the
+/// length comes from [`tract_version_len`].
+#[no_mangle]
+pub extern "C" fn tract_version_ptr() -> *const u8 {
+    VERSION.as_ptr()
+}
+
+/// Length of the [`tract_version_ptr`] bytes.
+#[no_mangle]
+pub extern "C" fn tract_version_len() -> usize {
+    VERSION.len()
+}
+
+// ---------------------------------------------------------------------------
+// Portable linear-memory staging & TractBuffer (native + wasm32)
+// ---------------------------------------------------------------------------
+
+/// Layout of a `tract_alloc(len)` / `tract_wasm_alloc(len)` block; `None` for
+/// zero or oversized lengths. Aligned to 8 bytes so callers can stage `u8`,
+/// `f32`, `f64`, `i64`, `usize` shapes, or pointer arrays in WASM linear memory.
+fn staging_layout(len: usize) -> Option<std::alloc::Layout> {
+    if len == 0 {
+        return None;
+    }
+    std::alloc::Layout::from_size_align(len, 8).ok()
+}
+
+/// Allocates `len` bytes (8-byte aligned) and returns the pointer (null when
+/// `len == 0` or on allocation failure). Callers stage input model bytes,
+/// shapes, or tensor buffers here, then release with [`tract_free`] using the
+/// same `len`.
+#[no_mangle]
+pub extern "C" fn tract_alloc(len: usize) -> *mut u8 {
+    match staging_layout(len) {
+        Some(layout) => unsafe { std::alloc::alloc(layout) },
+        None => std::ptr::null_mut(),
+    }
+}
+
+/// Releases memory obtained from [`tract_alloc`]. `len` must be the length
+/// passed to `tract_alloc`; a null `ptr` is a no-op.
+///
+/// # Safety
+/// `ptr` must come from `tract_alloc(len)` (or `tract_wasm_alloc(len)`) and
+/// not have been freed already.
+#[no_mangle]
+pub unsafe extern "C" fn tract_free(ptr: *mut u8, len: usize) {
+    if ptr.is_null() {
+        return;
+    }
+    if let Some(layout) = staging_layout(len) {
+        std::alloc::dealloc(ptr, layout);
+    }
+}
+
+/// Alias for [`tract_alloc`] for WebAssembly callers.
+#[no_mangle]
+pub extern "C" fn tract_wasm_alloc(len: usize) -> *mut u8 {
+    tract_alloc(len)
+}
+
+/// Alias for [`tract_free`] for WebAssembly callers.
+///
+/// # Safety
+/// Same contract as [`tract_free`].
+#[no_mangle]
+pub unsafe extern "C" fn tract_wasm_free(ptr: *mut u8, len: usize) {
+    tract_free(ptr, len);
+}
+
+/// Status code of a result buffer (`TRACT_STATUS_*`); `TRACT_STATUS_INTERNAL_ERROR`
+/// for a null handle.
+///
+/// # Safety
+/// `buf` must be null or a live handle returned by a `tract_infer_*` /
+/// `tract_model_infer_*` call.
+#[no_mangle]
+pub unsafe extern "C" fn tract_buffer_status(buf: *const TractBuffer) -> i32 {
+    match buf.as_ref() {
+        Some(b) => b.status,
+        None => TRACT_STATUS_INTERNAL_ERROR,
+    }
+}
+
+/// Borrowed pointer to the buffer's payload bytes, valid until
+/// [`tract_buffer_free`]. Null for a null handle.
+///
+/// On [`TRACT_STATUS_OK`], the payload is the contiguous native-endian bytes of
+/// output tensor 0 (e.g. `f32` logits). On error, the payload is the UTF-8
+/// error message.
+///
+/// # Safety
+/// `buf` must be null or a live handle.
+#[no_mangle]
+pub unsafe extern "C" fn tract_buffer_data(buf: *const TractBuffer) -> *const u8 {
+    match buf.as_ref() {
+        Some(b) => b.data.as_ptr(),
+        None => std::ptr::null(),
+    }
+}
+
+/// Length in bytes of the buffer's payload. 0 for a null handle.
+///
+/// # Safety
+/// `buf` must be null or a live handle.
+#[no_mangle]
+pub unsafe extern "C" fn tract_buffer_len(buf: *const TractBuffer) -> usize {
+    match buf.as_ref() {
+        Some(b) => b.data.len(),
+        None => 0,
+    }
+}
+
+/// Frees a [`TractBuffer`]. Null-safe.
+///
+/// # Safety
+/// `buf` must be null or a live handle; it must not be used or freed again
+/// afterwards.
+#[no_mangle]
+pub unsafe extern "C" fn tract_buffer_free(buf: *mut TractBuffer) {
+    if !buf.is_null() {
+        drop(Box::from_raw(buf));
+    }
+}
+
+fn ok_buffer(data: Vec<u8>) -> *mut TractBuffer {
+    Box::into_raw(Box::new(TractBuffer {
+        data,
+        status: TRACT_STATUS_OK,
+    }))
+}
+
+fn err_buffer(status: i32, msg: impl Into<String>) -> *mut TractBuffer {
+    let s = msg.into();
+    set_last_error(s.clone());
+    Box::into_raw(Box::new(TractBuffer {
+        data: s.into_bytes(),
+        status,
+    }))
 }
 
 // ---------------------------------------------------------------------------
@@ -602,6 +805,268 @@ pub unsafe extern "C" fn tract_model_run(
     }
 }
 
+// ---------------------------------------------------------------------------
+// Portable buffer-based inference entrypoints (native + wasm32)
+// ---------------------------------------------------------------------------
+
+fn run_plan_to_buffer(plan: &Arc<TypedRunnableModel>, input: Tensor) -> *mut TractBuffer {
+    match catch_panic(|| plan.run(tvec!(input.into()))) {
+        Ok(mut outputs) => {
+            if outputs.is_empty() {
+                return err_buffer(TRACT_STATUS_INTERNAL_ERROR, "model produced 0 outputs");
+            }
+            let first = outputs.remove(0).into_tensor();
+            // If output 0 is convertible to f32 (or already f32), emit contiguous
+            // native-endian f32 bytes; otherwise emit its raw tensor bytes.
+            match first.cast_to_dt(DatumType::F32) {
+                Ok(casted) => ok_buffer(casted.as_bytes().to_vec()),
+                Err(_) => ok_buffer(first.as_bytes().to_vec()),
+            }
+        }
+        Err(e) => err_buffer(TRACT_STATUS_INTERNAL_ERROR, e.to_string()),
+    }
+}
+
+/// Runs `model` with a single `f32` input tensor of `shape[..rank]` and
+/// `data[..data_len]`, returning output 0's contiguous native-endian `f32`
+/// bytes in a [`TractBuffer`]. Never returns null; check
+/// [`tract_buffer_status`] and release with [`tract_buffer_free`].
+///
+/// # Safety
+/// `shape` must point to `rank` readable `usize`s (or be null when `rank` is 0),
+/// and `data` must point to `data_len` readable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn tract_model_infer_f32(
+    model: *mut TractModel,
+    shape: *const usize,
+    rank: usize,
+    data: *const u8,
+    data_len: usize,
+) -> *mut TractBuffer {
+    let Some(model) = model_ref(model) else {
+        return err_buffer(TRACT_STATUS_INVALID_INPUT, "null model");
+    };
+    let shape_slice: &[usize] = if rank == 0 {
+        &[]
+    } else if shape.is_null() {
+        return err_buffer(TRACT_STATUS_INVALID_INPUT, "null shape with non-zero rank");
+    } else {
+        std::slice::from_raw_parts(shape, rank)
+    };
+    let Some(expected) = shape_slice
+        .iter()
+        .try_fold(std::mem::size_of::<f32>(), |acc, &d| acc.checked_mul(d))
+    else {
+        return err_buffer(
+            TRACT_STATUS_INVALID_INPUT,
+            format!("shape {shape_slice:?} overflows the address space"),
+        );
+    };
+    if data_len != expected {
+        return err_buffer(
+            TRACT_STATUS_INVALID_INPUT,
+            format!("data length {data_len} != expected {expected} bytes"),
+        );
+    }
+    let bytes: &[u8] = if data_len == 0 {
+        &[]
+    } else if data.is_null() {
+        return err_buffer(TRACT_STATUS_INVALID_INPUT, "null data with non-zero length");
+    } else {
+        std::slice::from_raw_parts(data, data_len)
+    };
+    let tensor = match catch_panic(|| Tensor::from_raw_dt(DatumType::F32, shape_slice, bytes)) {
+        Ok(t) => t,
+        Err(e) => return err_buffer(TRACT_STATUS_INVALID_INPUT, e.to_string()),
+    };
+    run_plan_to_buffer(&model.plan, tensor)
+}
+
+/// Decodes a 28x28 handwritten digit/glyph image from either:
+/// - `784` bytes (`u8` grayscale pixels `0..=255`, promoted to `f32` `0.0..=255.0`), or
+/// - `3136` bytes (`784` native-endian `f32` pixels),
+///
+/// into a `Tensor` matching `shape` (which must have 784 elements, typically `[1, 1, 28, 28]`).
+unsafe fn decode_28x28_tensor(
+    pixels: *const u8,
+    pixels_len: usize,
+    shape: &[usize],
+) -> Result<Tensor, *mut TractBuffer> {
+    const PIXELS_28X28: usize = 28 * 28;
+    const BYTES_F32_28X28: usize = PIXELS_28X28 * std::mem::size_of::<f32>();
+
+    if pixels.is_null() {
+        return Err(err_buffer(TRACT_STATUS_INVALID_INPUT, "null pixels pointer"));
+    }
+    let raw = std::slice::from_raw_parts(pixels, pixels_len);
+    if pixels_len == PIXELS_28X28 {
+        let floats: Vec<f32> = raw.iter().map(|&b| b as f32).collect();
+        let f_bytes =
+            std::slice::from_raw_parts(floats.as_ptr() as *const u8, BYTES_F32_28X28);
+        catch_panic(|| Tensor::from_raw_dt(DatumType::F32, shape, f_bytes))
+            .map_err(|e| err_buffer(TRACT_STATUS_INVALID_INPUT, e.to_string()))
+    } else if pixels_len == BYTES_F32_28X28 {
+        catch_panic(|| Tensor::from_raw_dt(DatumType::F32, shape, raw))
+            .map_err(|e| err_buffer(TRACT_STATUS_INVALID_INPUT, e.to_string()))
+    } else {
+        Err(err_buffer(
+            TRACT_STATUS_INVALID_INPUT,
+            format!(
+                "expected 784 (u8) or 3136 (f32) bytes for a 28x28 input, got {pixels_len}"
+            ),
+        ))
+    }
+}
+
+fn shape_for_28x28_typed(model: &TypedModel) -> Vec<usize> {
+    if let Ok(fact) = model.input_fact(0) {
+        if let Some(dims) = fact.shape.as_concrete() {
+            if dims.iter().copied().product::<usize>() == 28 * 28 {
+                return dims.to_vec();
+            }
+        }
+    }
+    vec![1, 1, 28, 28]
+}
+
+/// Runs a loaded [`TractModel`] on a 28x28 handwritten digit/glyph image
+/// (`784` `u8` grayscale bytes `0..=255` or `3136` native-endian `f32` bytes),
+/// returning output 0's `f32` logits in a [`TractBuffer`].
+///
+/// # Safety
+/// `model` must be a valid [`TractModel`] handle (or null, which returns an
+/// error buffer), and `pixels` must point to `pixels_len` readable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn tract_infer_28x28(
+    model: *mut TractModel,
+    pixels: *const u8,
+    pixels_len: usize,
+) -> *mut TractBuffer {
+    let Some(model) = model_ref(model) else {
+        return err_buffer(TRACT_STATUS_INVALID_INPUT, "null model");
+    };
+    let shape = shape_for_28x28_typed(model.plan.model());
+    let tensor = match decode_28x28_tensor(pixels, pixels_len, &shape) {
+        Ok(t) => t,
+        Err(buf) => return buf,
+    };
+    run_plan_to_buffer(&model.plan, tensor)
+}
+
+#[derive(PartialEq, Eq)]
+struct CachedPlanKey {
+    model_len: usize,
+    model_hash: u64,
+    input_shape: Vec<usize>,
+}
+
+thread_local! {
+    static CACHED_PLAN: RefCell<Option<(CachedPlanKey, Arc<TypedRunnableModel>)>> =
+        const { RefCell::new(None) };
+}
+
+fn hash_bytes(bytes: &[u8]) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    bytes.hash(&mut hasher);
+    hasher.finish()
+}
+
+/// Loads (or reuses from the thread-local cache) an in-memory ONNX model from
+/// `model_bytes[..model_len]` and runs inference on `input_bytes[..input_len]`,
+/// returning output 0's `f32` bytes in a [`TractBuffer`].
+///
+/// Input conventions:
+/// - `input_len == 784` (784 `u8` pixels `0..=255`) or `input_len == 3136`
+///   (784 `f32` pixels): runs with a 28x28 image tensor (`[1, 1, 28, 28]`).
+/// - Any other non-zero multiple of 4 (`N = input_len / 4` `f32` values):
+///   runs with a 1-D `[N]` `f32` tensor (pinning input 0 to `[N]`).
+///
+/// # Safety
+/// `model_bytes` must point to `model_len` readable bytes and `input_bytes` to
+/// `input_len` readable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn tract_infer_bytes(
+    model_bytes: *const u8,
+    model_len: usize,
+    input_bytes: *const u8,
+    input_len: usize,
+) -> *mut TractBuffer {
+    if model_bytes.is_null() || model_len == 0 {
+        return err_buffer(TRACT_STATUS_INVALID_INPUT, "empty or null model bytes");
+    }
+    if input_bytes.is_null() || input_len == 0 {
+        return err_buffer(TRACT_STATUS_INVALID_INPUT, "empty or null input bytes");
+    }
+    let onnx = std::slice::from_raw_parts(model_bytes, model_len);
+    let is_28x28 = input_len == 28 * 28 || input_len == 28 * 28 * std::mem::size_of::<f32>();
+    if !is_28x28 && !input_len.is_multiple_of(std::mem::size_of::<f32>()) {
+        return err_buffer(
+            TRACT_STATUS_INVALID_INPUT,
+            format!(
+                "input length {input_len} must be 784 (u8 28x28) or a multiple of 4 (f32 bytes)"
+            ),
+        );
+    }
+
+    let target_shape: Vec<usize> = if is_28x28 {
+        vec![1, 1, 28, 28]
+    } else {
+        vec![input_len / std::mem::size_of::<f32>()]
+    };
+
+    let key = CachedPlanKey {
+        model_len,
+        model_hash: hash_bytes(onnx),
+        input_shape: target_shape.clone(),
+    };
+
+    let cached = CACHED_PLAN.with(|cell| {
+        cell.borrow()
+            .as_ref()
+            .filter(|(k, _)| *k == key)
+            .map(|(_, plan)| Arc::clone(plan))
+    });
+
+    let plan = match cached {
+        Some(plan) => plan,
+        None => {
+            let built = catch_panic(|| -> TractResult<Arc<TypedRunnableModel>> {
+                let mut reader = std::io::Cursor::new(onnx);
+                let model = tract_onnx::onnx().model_for_read(&mut reader)?;
+                let model = model.with_input_fact(
+                    0,
+                    InferenceFact::dt_shape(DatumType::F32, target_shape.clone()),
+                )?;
+                model.into_optimized()?.into_runnable()
+            });
+            match built {
+                Ok(plan) => {
+                    CACHED_PLAN.with(|cell| {
+                        *cell.borrow_mut() = Some((key, Arc::clone(&plan)));
+                    });
+                    plan
+                }
+                Err(e) => return err_buffer(TRACT_STATUS_MODEL_ERROR, e.to_string()),
+            }
+        }
+    };
+
+    let tensor = if is_28x28 {
+        match decode_28x28_tensor(input_bytes, input_len, &target_shape) {
+            Ok(t) => t,
+            Err(buf) => return buf,
+        }
+    } else {
+        let raw = std::slice::from_raw_parts(input_bytes, input_len);
+        match catch_panic(|| Tensor::from_raw_dt(DatumType::F32, &target_shape, raw)) {
+            Ok(t) => t,
+            Err(e) => return err_buffer(TRACT_STATUS_INVALID_INPUT, e.to_string()),
+        }
+    };
+
+    run_plan_to_buffer(&plan, tensor)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -744,5 +1209,172 @@ mod tests {
         assert!(model.is_null());
         let err = unsafe { CStr::from_ptr(tract_last_error()) };
         assert!(!err.to_bytes().is_empty());
+        assert_eq!(tract_last_error_len(), err.to_bytes().len());
+    }
+
+    #[test]
+    fn wasm_alloc_and_version_span_work() {
+        let v_bytes =
+            unsafe { std::slice::from_raw_parts(tract_version_ptr(), tract_version_len()) };
+        assert_eq!(
+            std::str::from_utf8(v_bytes).unwrap(),
+            env!("CARGO_PKG_VERSION")
+        );
+
+        assert!(tract_alloc(0).is_null());
+        assert!(tract_wasm_alloc(0).is_null());
+        unsafe {
+            tract_free(std::ptr::null_mut(), 0);
+            tract_wasm_free(std::ptr::null_mut(), 0);
+        }
+
+        let ptr = tract_wasm_alloc(37);
+        assert!(!ptr.is_null());
+        assert_eq!(ptr as usize % 8, 0, "staging buffer must be 8-byte aligned");
+        unsafe {
+            std::ptr::write_bytes(ptr, 0xAB, 37);
+            assert_eq!(*ptr.add(36), 0xAB);
+            tract_wasm_free(ptr, 37);
+        }
+    }
+
+    #[test]
+    fn buffer_null_handles_and_errors_are_safe() {
+        unsafe {
+            assert_eq!(
+                tract_buffer_status(std::ptr::null()),
+                TRACT_STATUS_INTERNAL_ERROR
+            );
+            assert!(tract_buffer_data(std::ptr::null()).is_null());
+            assert_eq!(tract_buffer_len(std::ptr::null()), 0);
+            tract_buffer_free(std::ptr::null_mut());
+
+            let bad = b"not onnx";
+            let input = [1.0f32, 2.0, 3.0];
+            let buf = tract_infer_bytes(
+                bad.as_ptr(),
+                bad.len(),
+                input.as_ptr() as *const u8,
+                std::mem::size_of_val(&input),
+            );
+            assert_eq!(tract_buffer_status(buf), TRACT_STATUS_MODEL_ERROR);
+            let msg_bytes =
+                std::slice::from_raw_parts(tract_buffer_data(buf), tract_buffer_len(buf));
+            assert!(!msg_bytes.is_empty());
+            tract_buffer_free(buf);
+        }
+    }
+
+    #[test]
+    fn infer_bytes_and_model_infer_f32_roundtrip_identity() {
+        let onnx = include_bytes!("../../test/fixtures/identity.onnx");
+        let input: [f32; 3] = [1.25, -2.5, 4.75];
+        let input_bytes = unsafe {
+            std::slice::from_raw_parts(
+                input.as_ptr() as *const u8,
+                std::mem::size_of_val(&input),
+            )
+        };
+
+        // 1. One-shot / cached tract_infer_bytes via staged WASM-style buffers
+        unsafe {
+            let m_ptr = tract_wasm_alloc(onnx.len());
+            std::ptr::copy_nonoverlapping(onnx.as_ptr(), m_ptr, onnx.len());
+            let i_ptr = tract_wasm_alloc(input_bytes.len());
+            std::ptr::copy_nonoverlapping(input_bytes.as_ptr(), i_ptr, input_bytes.len());
+
+            let buf = tract_infer_bytes(m_ptr, onnx.len(), i_ptr, input_bytes.len());
+            tract_wasm_free(m_ptr, onnx.len());
+            tract_wasm_free(i_ptr, input_bytes.len());
+
+            assert_eq!(tract_buffer_status(buf), TRACT_STATUS_OK);
+            assert_eq!(tract_buffer_len(buf), std::mem::size_of_val(&input));
+            let out_f32 =
+                std::slice::from_raw_parts(tract_buffer_data(buf) as *const f32, input.len());
+            assert_eq!(out_f32, &input);
+            tract_buffer_free(buf);
+        }
+
+        // 2. Stateful tract_model_infer_f32
+        unsafe {
+            let model =
+                tract_onnx_model_load_bytes(onnx.as_ptr() as *const c_void, onnx.len());
+            assert!(!model.is_null());
+            let shape: [usize; 1] = [3];
+            let buf = tract_model_infer_f32(
+                model,
+                shape.as_ptr(),
+                1,
+                input_bytes.as_ptr(),
+                input_bytes.len(),
+            );
+            assert_eq!(tract_buffer_status(buf), TRACT_STATUS_OK);
+            let out_f32 =
+                std::slice::from_raw_parts(tract_buffer_data(buf) as *const f32, input.len());
+            assert_eq!(out_f32, &input);
+            tract_buffer_free(buf);
+            tract_model_free(model);
+        }
+    }
+
+    #[test]
+    fn infer_28x28_and_infer_bytes_classify_real_mnist_digits() {
+        let onnx = include_bytes!("../../example/assets/mnist-8.onnx");
+        let samples = include_bytes!("../../example/assets/mnist_samples.bin");
+        const STRIDE: usize = 1 + 28 * 28;
+        let sample_count = samples.len() / STRIDE;
+        assert_eq!(sample_count, 10);
+
+        let model =
+            unsafe { tract_onnx_model_load_bytes(onnx.as_ptr() as *const c_void, onnx.len()) };
+        assert!(!model.is_null());
+
+        for idx in 0..sample_count {
+            let offset = idx * STRIDE;
+            let expected_label = samples[offset] as usize;
+            let pixels_u8 = &samples[offset + 1..offset + STRIDE];
+
+            // Test A: tract_infer_28x28 with 784 u8 grayscale bytes
+            unsafe {
+                let buf = tract_infer_28x28(model, pixels_u8.as_ptr(), pixels_u8.len());
+                assert_eq!(tract_buffer_status(buf), TRACT_STATUS_OK);
+                assert_eq!(tract_buffer_len(buf), 10 * std::mem::size_of::<f32>());
+                let logits =
+                    std::slice::from_raw_parts(tract_buffer_data(buf) as *const f32, 10);
+                let pred = logits
+                    .iter()
+                    .enumerate()
+                    .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
+                    .unwrap()
+                    .0;
+                assert_eq!(pred, expected_label, "u8 28x28 mismatch at sample {idx}");
+                tract_buffer_free(buf);
+            }
+
+            // Test B: tract_infer_bytes with 3136 f32 bytes (and cached ONNX plan)
+            let pixels_f32: Vec<f32> = pixels_u8.iter().map(|&b| b as f32).collect();
+            unsafe {
+                let buf = tract_infer_bytes(
+                    onnx.as_ptr(),
+                    onnx.len(),
+                    pixels_f32.as_ptr() as *const u8,
+                    pixels_f32.len() * std::mem::size_of::<f32>(),
+                );
+                assert_eq!(tract_buffer_status(buf), TRACT_STATUS_OK);
+                assert_eq!(tract_buffer_len(buf), 10 * std::mem::size_of::<f32>());
+                let logits =
+                    std::slice::from_raw_parts(tract_buffer_data(buf) as *const f32, 10);
+                let pred = logits
+                    .iter()
+                    .enumerate()
+                    .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
+                    .unwrap()
+                    .0;
+                assert_eq!(pred, expected_label, "f32 28x28 mismatch at sample {idx}");
+                tract_buffer_free(buf);
+            }
+        }
+
+        tract_model_free(model);
     }
 }
