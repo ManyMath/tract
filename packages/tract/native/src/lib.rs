@@ -8,7 +8,7 @@
 //! The Dart `FfiBackend` calls the model/value functions (`tract_onnx_model_load_*`,
 //! `tract_nnef_model_load_*`, `tract_value_*`, `tract_model_run`). In addition,
 //! WebAssembly and portable buffer callers can stage linear-memory buffers via
-//! [`tract_alloc`]/[`tract_free`] (or [`tract_wasm_alloc`]/[`tract_wasm_free`])
+//! [`tract_alloc`]/[`tract_free`]
 //! and invoke [`tract_infer_28x28`], [`tract_infer_bytes`], or
 //! [`tract_model_infer_f32`], inspecting results via [`tract_buffer_status`],
 //! [`tract_buffer_data`], [`tract_buffer_len`], and [`tract_buffer_free`].
@@ -30,30 +30,16 @@ use std::sync::Arc;
 use tract_onnx::prelude::*;
 use tract_onnx::tract_core::model::TypedRunnableModel;
 
+// tract only draws entropy for the unseeded RandomUniform/RandomNormal/Multinomial
+// ops, none of which a classifier uses. Failing loudly beats returning fixed
+// bytes that look random, and keeps tract_ffi.wasm free of any imports.
 #[cfg(all(target_family = "wasm", any(target_os = "unknown", target_os = "none")))]
 #[no_mangle]
 unsafe extern "Rust" fn __getrandom_v03_custom(
-    dest: *mut u8,
-    len: usize,
+    _dest: *mut u8,
+    _len: usize,
 ) -> Result<(), getrandom::Error> {
-    // Deterministic SplitMix64 fill so wasm32-unknown-unknown builds require
-    // zero wasm-bindgen / Web Crypto imports when linking tract-onnx-opl.
-    let slice = if len == 0 {
-        &mut [][..]
-    } else {
-        core::slice::from_raw_parts_mut(dest, len)
-    };
-    let mut state: u64 = 0x9e37_79b9_7f4a_7c15;
-    for chunk in slice.chunks_mut(8) {
-        state = state.wrapping_add(0x9e37_79b9_7f4a_7c15);
-        let mut z = state;
-        z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
-        z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
-        z = z ^ (z >> 31);
-        let bytes = z.to_le_bytes();
-        chunk.copy_from_slice(&bytes[..chunk.len()]);
-    }
-    Ok(())
+    Err(getrandom::Error::UNSUPPORTED)
 }
 
 /// Buffer status: success.
@@ -188,7 +174,7 @@ pub extern "C" fn tract_version_len() -> usize {
 // Portable linear-memory staging & TractBuffer (native + wasm32)
 // ---------------------------------------------------------------------------
 
-/// Layout of a `tract_alloc(len)` / `tract_wasm_alloc(len)` block; `None` for
+/// Layout of a `tract_alloc(len)` block; `None` for
 /// zero or oversized lengths. Aligned to 8 bytes so callers can stage `u8`,
 /// `f32`, `f64`, `i64`, `usize` shapes, or pointer arrays in WASM linear memory.
 fn staging_layout(len: usize) -> Option<std::alloc::Layout> {
@@ -214,8 +200,7 @@ pub extern "C" fn tract_alloc(len: usize) -> *mut u8 {
 /// passed to `tract_alloc`; a null `ptr` is a no-op.
 ///
 /// # Safety
-/// `ptr` must come from `tract_alloc(len)` (or `tract_wasm_alloc(len)`) and
-/// not have been freed already.
+/// `ptr` must come from `tract_alloc(len)` and not have been freed already.
 #[no_mangle]
 pub unsafe extern "C" fn tract_free(ptr: *mut u8, len: usize) {
     if ptr.is_null() {
@@ -224,21 +209,6 @@ pub unsafe extern "C" fn tract_free(ptr: *mut u8, len: usize) {
     if let Some(layout) = staging_layout(len) {
         std::alloc::dealloc(ptr, layout);
     }
-}
-
-/// Alias for [`tract_alloc`] for WebAssembly callers.
-#[no_mangle]
-pub extern "C" fn tract_wasm_alloc(len: usize) -> *mut u8 {
-    tract_alloc(len)
-}
-
-/// Alias for [`tract_free`] for WebAssembly callers.
-///
-/// # Safety
-/// Same contract as [`tract_free`].
-#[no_mangle]
-pub unsafe extern "C" fn tract_wasm_free(ptr: *mut u8, len: usize) {
-    tract_free(ptr, len);
 }
 
 /// Status code of a result buffer (`TRACT_STATUS_*`); `TRACT_STATUS_INTERNAL_ERROR`
@@ -1219,19 +1189,17 @@ mod tests {
         );
 
         assert!(tract_alloc(0).is_null());
-        assert!(tract_wasm_alloc(0).is_null());
         unsafe {
             tract_free(std::ptr::null_mut(), 0);
-            tract_wasm_free(std::ptr::null_mut(), 0);
         }
 
-        let ptr = tract_wasm_alloc(37);
+        let ptr = tract_alloc(37);
         assert!(!ptr.is_null());
         assert_eq!(ptr as usize % 8, 0, "staging buffer must be 8-byte aligned");
         unsafe {
             std::ptr::write_bytes(ptr, 0xAB, 37);
             assert_eq!(*ptr.add(36), 0xAB);
-            tract_wasm_free(ptr, 37);
+            tract_free(ptr, 37);
         }
     }
 
@@ -1272,14 +1240,14 @@ mod tests {
 
         // 1. One-shot / cached tract_infer_bytes via staged WASM-style buffers
         unsafe {
-            let m_ptr = tract_wasm_alloc(onnx.len());
+            let m_ptr = tract_alloc(onnx.len());
             std::ptr::copy_nonoverlapping(onnx.as_ptr(), m_ptr, onnx.len());
-            let i_ptr = tract_wasm_alloc(input_bytes.len());
+            let i_ptr = tract_alloc(input_bytes.len());
             std::ptr::copy_nonoverlapping(input_bytes.as_ptr(), i_ptr, input_bytes.len());
 
             let buf = tract_infer_bytes(m_ptr, onnx.len(), i_ptr, input_bytes.len());
-            tract_wasm_free(m_ptr, onnx.len());
-            tract_wasm_free(i_ptr, input_bytes.len());
+            tract_free(m_ptr, onnx.len());
+            tract_free(i_ptr, input_bytes.len());
 
             assert_eq!(tract_buffer_status(buf), TRACT_STATUS_OK);
             assert_eq!(tract_buffer_len(buf), std::mem::size_of_val(&input));
