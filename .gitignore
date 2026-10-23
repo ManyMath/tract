@@ -23,3 +23,7 @@ target/
 *.swp
 .idea/
 .vscode/
+
+# Built by packages/tract/native/tool/build_wasm.sh
+packages/tract_wasm/tract_ffi.wasm
+node_modules/
