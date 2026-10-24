@@ -1,0 +1,27 @@
+{
+  "name": "@manymath/tract-wasm",
+  "version": "0.1.0",
+  "description": "JavaScript wrapper for tract_ffi.wasm: ONNX inference in the browser or Node with no glue code.",
+  "type": "module",
+  "private": true,
+  "license": "MIT",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./index.js"
+    }
+  },
+  "files": [
+    "index.js",
+    "index.d.ts"
+  ],
+  "scripts": {
+    "build:wasm": "../tract/native/tool/build_wasm.sh",
+    "test": "node --test test/*.test.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
