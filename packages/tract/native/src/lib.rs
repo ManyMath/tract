@@ -25,7 +25,6 @@
 
 use std::cell::RefCell;
 use std::ffi::{CStr, CString};
-use std::hash::{Hash, Hasher};
 use std::os::raw::{c_char, c_void};
 use std::rc::Rc;
 use std::sync::Arc;
@@ -1108,10 +1107,11 @@ pub unsafe extern "C" fn tract_infer_28x28(
     )
 }
 
+/// Exact cache key: the full model bytes (compared, not hashed, so a lookup
+/// can never return a different model) and the pinned input shape.
 #[derive(PartialEq, Eq)]
 struct CachedModelKey {
-    model_len: usize,
-    fingerprint: u64,
+    model: Vec<u8>,
     input_shape: Vec<usize>,
 }
 
@@ -1120,36 +1120,14 @@ thread_local! {
         const { RefCell::new(None) };
 }
 
-/// Cheap identity for a model buffer: its length plus a hash of the head, the
-/// tail and ~16k evenly spaced bytes, so cache lookups don't cost a full pass
-/// over a multi-megabyte model. Callers that swap models of the same size and
-/// layout should use the handle API instead.
-fn fingerprint(bytes: &[u8]) -> u64 {
-    const HEAD: usize = 4096;
-    const SAMPLES: usize = 16384;
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    bytes.len().hash(&mut hasher);
-    if bytes.len() <= 2 * HEAD + SAMPLES {
-        bytes.hash(&mut hasher);
-    } else {
-        bytes[..HEAD].hash(&mut hasher);
-        bytes[bytes.len() - HEAD..].hash(&mut hasher);
-        let step = (bytes.len() - 2 * HEAD) / SAMPLES;
-        for i in 0..SAMPLES {
-            bytes[HEAD + i * step].hash(&mut hasher);
-        }
-    }
-    hasher.finish()
-}
-
 /// One-shot inference: loads (or reuses from a one-entry thread-local cache)
 /// the ONNX model in `model_bytes[..model_len]` and runs
 /// `input_bytes[..input_len]` through it, returning output 0's `f32` bytes in
 /// a [`TractBuffer`]. No input normalization is applied.
 ///
-/// The cache key is the model length plus a sampled fingerprint rather than a
-/// hash of every byte; prefer [`tract_model_load`] and [`tract_model_run_f32`]
-/// when running a model repeatedly.
+/// The cache keeps a copy of the model bytes and compares them in full on every
+/// call (exact, but O(model size) per call); prefer [`tract_model_load`] and
+/// [`tract_model_run_f32`] when running a model repeatedly.
 ///
 /// Input conventions:
 /// - `input_len == 784` (784 `u8` pixels `0..=255`) or `input_len == 3136`
@@ -1191,16 +1169,10 @@ pub unsafe extern "C" fn tract_infer_bytes(
         vec![input_len / 4]
     };
 
-    let key = CachedModelKey {
-        model_len,
-        fingerprint: fingerprint(onnx),
-        input_shape: target_shape.clone(),
-    };
-
     let cached = CACHED_MODEL.with(|cell| {
         cell.borrow()
             .as_ref()
-            .filter(|(k, _)| *k == key)
+            .filter(|(k, _)| k.input_shape == target_shape && k.model == onnx)
             .map(|(_, m)| Rc::clone(m))
     });
 
@@ -1209,6 +1181,10 @@ pub unsafe extern "C" fn tract_infer_bytes(
         None => match catch_panic(|| load_onnx_pinned(onnx, target_shape.clone())) {
             Ok(m) => {
                 let model = Rc::new(m);
+                let key = CachedModelKey {
+                    model: onnx.to_vec(),
+                    input_shape: target_shape.clone(),
+                };
                 CACHED_MODEL.with(|cell| *cell.borrow_mut() = Some((key, Rc::clone(&model))));
                 model
             }
@@ -1654,20 +1630,44 @@ mod tests {
     }
 
     #[test]
-    fn infer_bytes_cache_distinguishes_models_of_equal_length() {
-        let a = include_bytes!("../../test/fixtures/identity.onnx");
-        let mut b = a.to_vec();
-        // Same length, one flipped byte: the cache must not serve model `a`.
-        let pos = b.windows(8).position(|w| w == b"identity").unwrap_or(10);
-        b[pos] ^= 1;
+    fn infer_bytes_cache_is_exact_for_same_length_models() {
+        // ModelProto.doc_string (field 6) appended as a long string: still a
+        // valid model, but big enough that a sampling key would skip bytes.
+        let base = include_bytes!("../../test/fixtures/identity.onnx");
+        let make = |flip_at: Option<usize>| {
+            let mut doc = vec![b'a'; 100_000];
+            if let Some(i) = flip_at {
+                doc[i] = b'b';
+            }
+            let mut m = base.to_vec();
+            m.extend_from_slice(&[0x32, 0xa0, 0x8d, 0x06]);
+            m.extend_from_slice(&doc);
+            m
+        };
+        let a = make(None);
+        // Every position a 16k-sample, 4k head/tail fingerprint would miss.
+        let b = make(Some(50_001));
+        assert_eq!(a.len(), b.len());
         let input = [1.0f32, 2.0, 3.0];
         let bytes = unsafe { std::slice::from_raw_parts(input.as_ptr() as *const u8, 12) };
+        let cached =
+            |m: &[u8]| CACHED_MODEL.with(|c| c.borrow().as_ref().map(|(k, _)| k.model == m));
         unsafe {
-            let first = logits(tract_infer_bytes(a.as_ptr(), a.len(), bytes.as_ptr(), 12));
-            assert_eq!(first, input);
-            let _ = tract_infer_bytes(b.as_ptr(), b.len(), bytes.as_ptr(), 12);
-            let again = logits(tract_infer_bytes(a.as_ptr(), a.len(), bytes.as_ptr(), 12));
-            assert_eq!(again, input);
+            assert_eq!(
+                logits(tract_infer_bytes(a.as_ptr(), a.len(), bytes.as_ptr(), 12)),
+                input
+            );
+            assert_eq!(cached(&a), Some(true));
+            assert_eq!(
+                logits(tract_infer_bytes(b.as_ptr(), b.len(), bytes.as_ptr(), 12)),
+                input
+            );
+            assert_eq!(
+                cached(&b),
+                Some(true),
+                "model b must replace a, not hit a's entry"
+            );
+            assert_eq!(cached(&a), Some(false));
         }
     }
 }
