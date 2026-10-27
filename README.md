@@ -54,14 +54,60 @@ cd packages/tract_flutter/example && flutter run
 | macOS | Expected to work (built by the same hook, not yet run) |
 | Windows | Expected to work (built by the same hook, not yet run) |
 | iOS | Expected to work (built by the same hook, not yet run) |
-| Web | Not supported yet (no `dart:ffi`; tract is not compiled to WASM here) |
+| Web | JavaScript only, via `tract_ffi.wasm` and [`@manymath/tract-wasm`](#webassembly-javascript); the Dart package has no web backend (no `dart:ffi`) |
 
 Linux runs the CLI, the tests and the Flutter example end to end; Android runs
 the Flutter example end to end (on an API 33 emulator). The example's
 integration test checks a platform in one command:
 `cd packages/tract_flutter/example && flutter test integration_test -d <device>`.
-Web inference would require compiling tract to WASM and calling it via JS
-interop, which the build hook does not do - it is a known gap.
+Web inference goes through the separate WebAssembly build described below; the
+Dart package does not call it.
+
+## WebAssembly (JavaScript)
+
+`packages/tract/native` also builds for `wasm32-unknown-unknown` as a module
+with no imports (no `wasm-bindgen`), wrapped by the ESM package
+`packages/tract_wasm` (`@manymath/tract-wasm`, private, not published).
+
+```sh
+packages/tract/native/tool/build_wasm.sh   # -> packages/tract_wasm/tract_ffi.wasm
+cd packages/tract_wasm && npm test
+```
+
+The script builds cargo's size-oriented `wasm` profile, runs `wasm-opt -Oz`
+(binaryen), asserts zero imports and enforces a size budget. The result is about
+7.8 MB (2.4 MB gzipped). The module uses WebAssembly SIMD (simd128, plus bulk
+memory and the other features rustc enables by default), so the browser or
+Node must support it: Chrome 91+, Firefox 89+, Safari 16.4+, Node 16.4+.
+
+```js
+import { load } from '@manymath/tract-wasm';
+
+const tract = await load(await fetch('tract_ffi.wasm'));
+const model = tract.loadModel(onnxBytes, { normalization: 'mnist' });
+const { label, probs } = model.classify28x28(pixels); // 784 Uint8 or Float32
+const logits = model.run(new Float32Array(784), [1, 1, 28, 28]);
+model.free();
+```
+
+`loadModel` parses and optimizes the model once and returns a handle; run it as
+often as needed. The underlying C ABI is `tract_model_load[_with_options]`,
+`tract_model_run_f32` / `tract_model_run_u8` / `tract_infer_28x28` and
+`tract_model_free`, with results read through `tract_buffer_*`. The one-shot
+`tract_infer_bytes` takes the model bytes on every call and keeps a one-entry
+cache that compares them in full, so it is correct but slow for large models.
+
+Pixel inputs can be normalized at load time as
+`((invert ? max - v : v) * scale - mean) / std`. Presets:
+
+| `normalization` | Formula |
+|---|---|
+| `none` (default) | values passed through unchanged |
+| `unit` | `x / 255` |
+| `mnist` | `(x / 255 - 0.1307) / 0.3081` |
+
+or pass `{ scale, mean, std, max, invert }`. The bundled `mnist-8.onnx`
+classifies equally well with `unit` and `mnist`, and worse with raw 0-255.
 
 ## Development
 

@@ -41,7 +41,7 @@ model.dispose();
 | macOS | Should work (built by the same hook, not yet run) |
 | Windows | Should work (built by the same hook, not yet run) |
 | iOS | Should work (built by the same hook, not yet run) |
-| Web | Not supported yet (no `dart:ffi`; tract is not compiled to WASM here) |
+| Web | Not supported by this Dart package (no `dart:ffi`); the repository's JavaScript package `@manymath/tract-wasm` runs the same engine as WebAssembly |
 
 [`Tract`]: https://pub.dev/documentation/tract/latest/tract/Tract-class.html
 [`Tensor`]: https://pub.dev/documentation/tract/latest/tract/Tensor-class.html
