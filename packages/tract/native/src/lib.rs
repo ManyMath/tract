@@ -963,6 +963,32 @@ fn run_u8_bytes(model: &TractModel, shape: &[usize], bytes: &[u8]) -> *mut Tract
     run_values(model, shape, bytes.iter().map(|&b| b as f32))
 }
 
+/// Checks `dims` against input 0's declared rank and concrete dimensions
+/// (symbolic dimensions accept any size).
+fn check_input_shape(model: &TypedModel, dims: &[usize]) -> Result<(), String> {
+    let Ok(fact) = model.input_fact(0) else {
+        return Ok(());
+    };
+    let declared = &fact.shape;
+    if declared.rank() != dims.len() {
+        return Err(format!(
+            "input shape {dims:?} has rank {}, but the model expects rank {} ({declared:?})",
+            dims.len(),
+            declared.rank()
+        ));
+    }
+    for (i, (want, &got)) in declared.iter().zip(dims).enumerate() {
+        if let Some(want) = want.as_i64().map(|w| w as usize) {
+            if want != got {
+                return Err(format!(
+                    "input shape {dims:?} does not match the model's input {declared:?} (dimension {i}: expected {want}, got {got})"
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Shared checks for the `tract_model_run_*` entrypoints, then `run`.
 unsafe fn run_checked(
     model: *const TractModel,
@@ -991,6 +1017,9 @@ unsafe fn run_checked(
             TRACT_STATUS_INVALID_INPUT,
             format!("data length {data_len} != expected {expected} bytes"),
         );
+    }
+    if let Err(msg) = check_input_shape(model.plan.model(), dims) {
+        return err_buffer(TRACT_STATUS_INVALID_INPUT, msg);
     }
     if data_len != 0 && data.is_null() {
         return err_buffer(TRACT_STATUS_INVALID_INPUT, "null data with non-zero length");
@@ -1592,6 +1621,32 @@ mod tests {
             assert!(!m.is_null());
             let out = logits(tract_model_run_u8(m, px.as_ptr(), 3, shape.as_ptr(), 1));
             assert_eq!(out, vec![127.5, 77.5, 0.0]);
+            tract_model_free(m);
+        }
+    }
+
+    #[test]
+    fn run_rejects_shape_mismatch_as_invalid_input() {
+        let onnx = include_bytes!("../../example/assets/mnist-8.onnx");
+        unsafe {
+            let m = tract_model_load(onnx.as_ptr(), onnx.len());
+            assert!(!m.is_null());
+            let px = vec![0u8; 784];
+            for shape in [vec![784usize], vec![1, 784], vec![1, 1, 28, 27]] {
+                let n: usize = shape.iter().product();
+                let buf =
+                    tract_model_run_u8(m, px.as_ptr(), n.min(784), shape.as_ptr(), shape.len());
+                assert_eq!(
+                    tract_buffer_status(buf),
+                    TRACT_STATUS_INVALID_INPUT,
+                    "{shape:?}"
+                );
+                tract_buffer_free(buf);
+            }
+            let shape = [1usize, 1, 28, 28];
+            let buf = tract_model_run_u8(m, px.as_ptr(), 784, shape.as_ptr(), 4);
+            assert_eq!(tract_buffer_status(buf), TRACT_STATUS_OK);
+            tract_buffer_free(buf);
             tract_model_free(m);
         }
     }
