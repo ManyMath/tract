@@ -11,7 +11,15 @@
 set -euo pipefail
 
 native_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-out="${1:-$native_dir/../../tract_wasm/tract_ffi.wasm}"
+if [ $# -ge 1 ]; then
+  # Resolve against the caller's cwd, before the cd below.
+  case "$1" in
+    /*) out="$1" ;;
+    *) out="$PWD/$1" ;;
+  esac
+else
+  out="$native_dir/../../tract_wasm/tract_ffi.wasm"
+fi
 max_bytes="${TRACT_WASM_MAX_BYTES:-8500000}"
 max_gzip="${TRACT_WASM_MAX_GZIP_BYTES:-2600000}"
 wasm_opt="${WASM_OPT:-$(command -v wasm-opt || echo "$HOME/.cargo/bin/wasm-opt")}"
