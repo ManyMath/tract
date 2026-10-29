@@ -107,3 +107,42 @@ test('repeated inference does not leak wasm memory', () => {
   assert.equal(tract.exports.memory.buffer.byteLength, before);
   model.free();
 });
+
+test('a failing second stage frees the first staged buffer', () => {
+  const real = tract.exports;
+  let live = 0;
+  const counting = {
+    ...real,
+    memory: real.memory,
+    tract_alloc: (n) => { const p = real.tract_alloc(n); if (p) live++; return p; },
+    tract_free: (p, n) => { live--; return real.tract_free(p, n); },
+  };
+  const model = tract.loadModel(onnx);
+  tract.exports = counting;
+  try {
+    // A shape this long makes `new Uint32Array(shape)` throw after the data
+    // buffer has already been staged.
+    const hugeShape = { length: 2 ** 40 };
+    const before = real.memory.buffer.byteLength;
+    for (let i = 0; i < 500; i++) {
+      assert.throws(() => model.run(new Uint8Array(784), hugeShape), RangeError);
+      assert.throws(() => tract.loadModel(onnx, { inputShape: hugeShape }), RangeError);
+    }
+    assert.equal(live, 0);
+    assert.equal(real.memory.buffer.byteLength, before);
+  } finally {
+    tract.exports = real;
+    model.free();
+  }
+});
+
+test('a wrong input shape is INVALID_INPUT, not an internal error', () => {
+  const model = tract.loadModel(onnx, { normalization: 'unit' });
+  for (const shape of [[784], [1, 784], [1, 1, 28, 27]]) {
+    assert.throws(
+      () => model.run(new Uint8Array(shape.reduce((a, b) => a * b)), shape),
+      (e) => /status 2\b/.test(e.message) && /expects rank|does not match/.test(e.message),
+      JSON.stringify(shape));
+  }
+  model.free();
+});

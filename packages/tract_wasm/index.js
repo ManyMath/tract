@@ -113,17 +113,19 @@ class Tract {
     const e = this.exports;
     const norm = resolveNormalization(opts);
     const shape = opts.inputShape ?? [];
-    const model = this.stage(bytes);
-    const shapeBytes = this.stage(new Uint32Array(shape));
+    let model;
+    let shapeBytes;
     let handle;
     try {
+      model = this.stage(bytes);
+      shapeBytes = this.stage(new Uint32Array(shape));
       handle = e.tract_model_load_with_options(
         model.ptr, model.len, norm.invert ? 1 : 0,
         norm.scale, norm.mean, norm.std, norm.max,
         shapeBytes.ptr, shape.length) >>> 0;
     } finally {
-      this.release(model);
-      this.release(shapeBytes);
+      if (model) this.release(model);
+      if (shapeBytes) this.release(shapeBytes);
     }
     if (handle === 0) throw new Error(`tract: loading the model failed: ${this.lastError()}`);
     return new TractModel(this, handle);
@@ -158,14 +160,16 @@ class TractModel {
     if (!isU8 && !(input instanceof Float32Array)) {
       throw new TypeError('run: input must be a Float32Array or Uint8Array');
     }
-    const data = t.stage(input);
-    const dims = t.stage(new Uint32Array(shape));
+    let data;
+    let dims;
     try {
+      data = t.stage(input);
+      dims = t.stage(new Uint32Array(shape));
       const fn = isU8 ? e.tract_model_run_u8 : e.tract_model_run_f32;
       return t.takeBuffer(fn(handle, data.ptr, data.len, dims.ptr, shape.length));
     } finally {
-      t.release(data);
-      t.release(dims);
+      if (data) t.release(data);
+      if (dims) t.release(dims);
     }
   }
 
