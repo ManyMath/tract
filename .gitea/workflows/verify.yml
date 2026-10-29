@@ -1,0 +1,51 @@
+name: Private tract hook verification
+on:
+  push:
+    branches: [main, 'maintenance/**']
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+env:
+  RUSTUP_TOOLCHAIN: 1.94.1
+  CARGO_HOME: ${{ runner.temp }}/tract-cargo-${{ github.run_id }}
+  CARGO_BUILD_JOBS: '2'
+  DASH__SUPPRESS_ANALYTICS: 'true'
+  FLUTTER_SUPPRESS_ANALYTICS: 'true'
+  CI: 'true'
+  DO_NOT_TRACK: '1'
+jobs:
+  linux:
+    runs-on: manymath-maintenance-linux-x64
+    timeout-minutes: 90
+    steps:
+      - name: Require private primary forge
+        env:
+          PRIMARY_SERVER: ${{ github.server_url }}
+        run: test "$PRIMARY_SERVER" = 'https://git.manymath.com'
+      - uses: actions/checkout@v4
+      - name: Require provisioned hook toolchain
+        run: |
+          python3 tool/check_provisioned.py
+          dart --version
+          flutter --version
+          command -v ninja clang cmake pkg-config xvfb-run
+          pkg-config --exists gtk+-3.0
+      - name: Native checks
+        run: |
+          cargo fmt --all --check --manifest-path packages/tract/native/Cargo.toml
+          cargo clippy --locked --all-targets --manifest-path packages/tract/native/Cargo.toml -- -D warnings
+          cargo test --locked --manifest-path packages/tract/native/Cargo.toml
+      - name: Current hook tests and web compilation
+        run: |
+          flutter pub get
+          dart run melos run format
+          dart run melos run analyze
+          dart run melos run test
+          dart compile js packages/tract/example/web_main.dart -o "$RUNNER_TEMP/tract_web.js"
+          git diff --exit-code
+      - name: Example Linux build and inference
+        working-directory: packages/tract_flutter/example
+        run: |
+          flutter build linux --debug
+          xvfb-run -a flutter test integration_test -d linux

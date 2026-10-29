@@ -1,6 +1,9 @@
 [package]
 name = "tract_ffi"
 version = "0.0.1"
+# Internal native implementation bundled by the Dart build hook.
+# The crates.io name belongs to another package; retain our local ABI name.
+publish = false
 edition = "2021"
 # tract 0.23's MSRV.
 rust-version = "1.91"
